@@ -5,37 +5,64 @@
 **Last refined:** 2026-10-10  
 **Depends on:** Feature 0002
 
-## Decision summary
+## Outcome
 
-Clicking a ready document card opens a reading view that supports continuous scrolling and restores the signed-in user's last position on a later visit. Preserve a PDF's original pages. Reflow EPUB text for the viewport while keeping a stable content locator. Use Docling for conversion, extraction, and a normalized view of Docling-format documents, not as a replacement for the original PDF or EPUB renderer.
+Let a signed-in user read a `ready` or `ready_with_warning` document in a continuous scrolling view. When the user returns, restore that user's saved reading position. Render PDF pages from the preserved PDF source, reflow EPUB content from the preserved EPUB source, and render DoclingDocument JSON as sanitized HTML.
+
+## Scope and terms
+
+- Use the stable document ID and authenticated source access from Feature 0002.
+- Use **reading position** for a location saved in SQLite for one user and one document. Do not share a reading position between users.
+- Use **completion state** for whether the current user explicitly marked a document finished.
+- Use **source locator** for a position tied to document content rather than to viewport size. Store a source locator and a progress percentage when the format permits both.
+- Use **approximate restore** when a saved source locator no longer identifies content in the current source and the reader uses a fallback position.
+- Keep hover preview in Feature 0004. Require that feature's preview to leave reading positions and completion states unchanged.
 
 ## Reader behavior
 
-- Open the reader from a card by its stable document ID. Provide a visible Close action, Escape behavior, a document title, and a current-position indicator. Closing returns to the same library search and scroll position.
-- Display a PDF as its original pages in a continuous vertical reading view. Provide page navigation and zoom without losing the current position. At ordinary zoom, scrolling updates the current page as the page occupying the reading focus changes.
-- Display an EPUB in reading order with responsive, reflowable text and images. Keep it scrollable. Offer a table of contents when the source includes one. Treat publisher page markers as authoritative only when present; otherwise display progress as a location or percentage instead of claiming an exact source page.
-- A valid DoclingDocument JSON import opens as sanitized HTML derived from the structured document. It can show exact pages only if the document actually contains stable page information.
-- Provide clear states for a missing original, a failed renderer, and unsupported content. Do not silently mark a failed open as read.
-- Use keyboard-accessible page/section navigation, readable focus order, and touch-friendly controls. Restore focus to the originating card on close.
+- Open the reader when a user activates a `ready` or `ready_with_warning` document card. Resolve the card through its document ID.
+- Show the document title, a current-position indicator, and a visible `Close` action in the reader.
+- Close the reader through `Close` or Escape. Restore the library search query and scroll position, then return keyboard focus to the originating card.
+- Display a PDF as its preserved pages in a continuous vertical view. Provide page navigation and zoom controls. When the user scrolls at the default zoom, show the page occupying the largest visible area as the current page.
+- Display EPUB text and images in source reading order in a vertically scrollable, reflowable view. If the EPUB contains a table of contents, provide navigation through that table of contents.
+- If an EPUB contains publisher page markers, use those markers for source page labels. Otherwise show a content location or percentage without claiming an exact source page.
+- Render a valid DoclingDocument JSON source as HTML derived from its structured content. Remove scripts, event handlers, and unsafe URLs before rendering the HTML. Show an exact page label only when the source contains stable page information.
+- If the source file is missing, show a source-missing state and a way back to the library. If rendering fails, show a rendering-error state and a way back to the library. If the source contains content the reader cannot display, show an unsupported-content state and a way back to the library.
+- If the reader fails to open, leave the saved reading position and completion state unchanged.
+- Make page and section navigation keyboard accessible. Keep focus visible and controls usable by touch.
 
 ## Reading position
 
-- Save progress per user and document in SQLite. For PDF, store page number plus a within-page position. For EPUB, store a stable source/content locator with a percentage fallback so font-size or viewport changes return near the same passage. For Docling HTML, store a stable element locator and offset.
-- Save after meaningful movement with a debounce, when the reader closes, and when the page becomes hidden. A write must not block scrolling. The server validates the document ID, user, and locator before accepting progress.
-- Opening a previously read document restores its saved position. A first open starts at the beginning. If an old locator no longer resolves after replacement or reconversion, fall back safely to the nearest surviving location and tell the user when the jump is approximate.
-- Persist progress across browser reload, sign-out/sign-in, and app restart. A second user starts with independent progress. Hover previews do not write reading progress.
-- Permit an explicit `Mark finished` action and a `Start over` action. Neither deletes the original or other users' progress.
+- Save reading positions in SQLite under the current user ID and document ID. Permit a signed-in user to read or change only that user's positions.
+- For PDF, store the current page number and a within-page offset between 0 and 1. For EPUB, store a locator tied to the source reading order and a progress percentage as fallback. For DoclingDocument JSON, store a structured-element locator and offset plus a progress percentage as fallback.
+- After the current-position indicator stops changing for 500 ms, save the new position. Coalesce position changes during that interval into one write.
+- Save the current position when the reader closes or the browser page becomes hidden. Perform progress writes without blocking reader scrolling.
+- Validate the document ID, current user, and format-specific locator on the server before changing a saved position. Reject a malformed or out-of-range locator without replacing the previous position.
+- On a first open, start at the beginning. On a later open, restore the current user's saved reading position, including after browser reload, sign-out and sign-in, or application restart.
+- If an EPUB or Docling source locator no longer resolves, restore from the saved progress percentage and label the position as approximate. If a saved PDF page is beyond the current page count, restore to the final page and label the position as approximate.
+- If the source file is missing, retain the saved reading position without writing a replacement position.
+- Provide a `Mark finished` action that records completion for the current user and document without deleting the saved position.
+- Provide a `Start over` action that clears completion for the current user and document and sets the saved position to the beginning. Neither action changes another user's progress or deletes the source file.
 
-## Acceptance criteria
+## Acceptance criteria and verification
 
-- Scroll to PDF page 7, close, reopen, and return to page 7 near the same point, including after app restart.
-- Read into an EPUB, change viewport width or font size, close, and reopen near the same text rather than at a layout-dependent page number.
-- Two users can read the same document and resume at different places. An anonymous request cannot read either user's progress or document bytes.
-- A malformed progress payload is rejected without changing the stored position. A missing or changed source produces an understandable recovery state.
-- Hovering or paging through a preview leaves the stored reading position unchanged.
+| ID | Observable result | Verification |
+| --- | --- | --- |
+| AC-01 | Activating a `ready` or `ready_with_warning` card opens the reader for that document ID. `Close` and Escape return to the same library search query and scroll position, with focus on the originating card. | Browser navigation and focus checks with both import states. |
+| AC-02 | A PDF renders from its preserved source as vertically scrollable pages. Page navigation and zoom change the view without resetting the position. At default zoom, the current-page indicator follows the page with the largest visible area. | Browser check with a multi-page PDF at default and changed zoom. |
+| AC-03 | An EPUB renders source text and images in reading order and reflows when the viewport width changes. Its table of contents navigates when present. Without publisher page markers, the reader shows a location or percentage rather than an exact source page. | Browser checks with EPUB fixtures with and without a table of contents or page markers. |
+| AC-04 | A DoclingDocument JSON source renders structured content as HTML. Scripts, event handlers, and unsafe URLs in a fixture do not execute or remain active. Exact page labels appear only for stable page data. | Browser rendering check and backend sanitization tests with crafted JSON fixtures. |
+| AC-05 | After a user reaches PDF page 7 and closes the reader, reopening returns to page 7 within 5% of the saved page height. The same position restores after browser reload and application restart. If the source later has fewer than seven pages, the reader opens the final page and labels the restore as approximate. | Browser position check and restart test against the same SQLite database; test with a shorter replacement PDF. |
+| AC-06 | After a user reaches a paragraph in an EPUB, changing viewport width or browser font size and reopening returns to that paragraph. If the saved locator no longer resolves, the reader uses the saved percentage and labels the restore as approximate. | Browser reflow check and test with an invalidated EPUB locator. |
+| AC-07 | Two users can save different positions in the same document. Each user resumes at their own position after sign-out and sign-in. Anonymous and cross-user requests cannot read or change another user's position; anonymous requests cannot read document bytes. | Backend authorization tests and browser checks with two accounts. |
+| AC-08 | A malformed or out-of-range progress payload is rejected and leaves the previous position unchanged. A missing source shows the source-missing state without overwriting the saved position. A rendering failure and unsupported content show their respective states without recording progress. | Backend payload tests and browser checks with missing and failing sources. |
+| AC-09 | `Mark finished` records completion without deleting the position. `Start over` clears completion and resumes at the beginning. Neither action changes another user's progress or deletes the source. | Backend state tests and browser action checks with two users. |
+| AC-10 | Page and section controls work by keyboard and touch, focus remains visible and follows the controls' visual order, and closing the reader restores focus to its card. | Browser keyboard, touch, and focus checks. |
+| AC-11 | Repeated position changes within 500 ms produce one progress write. Closing the reader or hiding the page saves the current position. A progress write does not pause reader scrolling. | Browser checks with controlled progress responses and rapid scrolling. |
+| AC-12 | A DoclingDocument JSON reading position restores at the saved element and offset. If that element no longer exists, the reader uses the saved percentage and labels the restore as approximate. | Browser check with a saved Docling position and a changed structured document. |
 
-## Boundary
+## Reference and boundary
 
-The reader does not require automatic book-to-book playback, video controls, or generated PDF/EPUB export. Feature 0004 supplies the separate hover preview.
+Use Feature 0002's preserved source files and authenticated document routes. Do not use Docling output as a replacement renderer for PDF or EPUB. Docling's EPUB conversion example documents that conversion can lose internal anchor targets; derive EPUB reading locators from the preserved source. Feature 0004 supplies the separate hover preview. Automatic book-to-book playback, video controls, and generated PDF or EPUB export are outside this feature.
 
-Sources: [Docling supported formats](https://docling-project.github.io/docling/usage/supported_formats/), [Docling EPUB example and anchor limitation](https://docling-project.github.io/docling/_generated/examples/epub_conversion/), [W3C EPUB pagination guidance](https://www.w3.org/TR/epub-a11y-explain-12/).
+Sources: [Docling supported formats](https://docling-project.github.io/docling/usage/supported_formats/), [Docling EPUB conversion and anchor limitation](https://docling-project.github.io/docling/_generated/examples/epub_conversion/), [W3C EPUB pagination guidance](https://www.w3.org/TR/epub-a11y-explain-12/).

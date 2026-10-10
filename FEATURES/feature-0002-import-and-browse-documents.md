@@ -5,41 +5,73 @@
 **Last refined:** 2026-10-10  
 **Depends on:** Feature 0001
 
-## Decision summary
+## Outcome
 
-Make the default Tomeshed view a responsive library of PDF, EPUB, and DoclingDocument JSON documents. A signed-in user can add a file, search the catalog, and see a clickable thumbnail card for each completed import. Use Docling as the backend extraction and normalized-document layer while retaining the source file.
+Give a signed-in user a responsive library of PDF, EPUB, and DoclingDocument JSON files. The user can upload a file, find a document by title, author, or original filename, and open the preserved source from a document card. Use Docling to extract structured content for indexing and later processing.
 
-## Import and catalog
+## Scope and terms
 
-- Accept local PDF, EPUB, and valid DoclingDocument JSON files in this slice. Store the original bytes in a managed library directory and give each document an opaque, stable ID. Feature 0006 adds other ingest paths.
-- Validate the actual file format and reject unsupported or corrupt files with a useful error. Publish a catalog entry only after the source is safely stored and identified. A valid PDF or EPUB remains readable if Docling extraction fails; show an indexing warning and retry option instead of claiming searchable content exists. Invalid Docling JSON cannot become a readable entry.
-- Convert with Docling's `DocumentConverter` using an explicit PDF/EPUB/Docling JSON allow-list. Persist a DoclingDocument JSON representation or a reproducible derived artifact for search and later processing. Keep PDF and EPUB originals as the source for reading and download; Docling is not a PDF/EPUB round-trip renderer. A Docling JSON upload is already the structured source.
-- Extract title, author, type, size, and searchable text when available. Fall back to a cleaned filename for a missing title and show a clear unknown author state. Do not invent bibliographic metadata.
-- Persist the catalog and import state in SQLite. Reconcile interrupted imports on restart. Show active and failed imports in a header drawer, with live state updates through SSE and a normal API refresh path after reconnecting.
-- Generate or extract a cover/first-page thumbnail. A failed thumbnail falls back to type-specific artwork without losing a valid import. Keep generated artifacts associated with the stable document ID.
+- Accept browser uploads in this feature. Feature 0006 adds other import paths.
+- Use **source file** for the uploaded PDF, EPUB, or DoclingDocument JSON bytes. Preserve the source file for reading and download.
+- Use **document** for a catalog record with a stable, opaque document ID. Store catalog records and import jobs in SQLite. Store source files and generated artifacts in managed library storage.
+- Use **import job** for the work that validates, stores, and processes one upload. Record its state as `pending`, `processing`, `ready`, `ready_with_warning`, or `failed`. `ready` and `ready_with_warning` documents appear in the library. A `failed` job does not create a library card.
+- Use **indexing warning** when a valid PDF or EPUB source is available but Docling extraction fails. A document with this warning has state `ready_with_warning`; its extracted text is unavailable until a retry succeeds.
+- Keep document reading in Feature 0003, hover preview in Feature 0004, metadata editing and richer search in Feature 0005, and additional import paths in Feature 0006.
+
+## Import and processing
+
+- Accept PDF, EPUB, and DoclingDocument JSON uploads. Reject a file whose content is not a valid instance of one of those formats, regardless of its filename extension.
+- Assign each accepted source a stable, opaque document ID. Store the source bytes in managed library storage before publishing a document card.
+- Convert PDF and EPUB sources with Docling's `DocumentConverter` and an explicit PDF, EPUB, and Docling JSON input allow-list. Validate a DoclingDocument JSON upload as a structured document; treat that upload as the structured source.
+- Persist the DoclingDocument JSON representation, or a derived artifact that can be reproduced from the source, for indexing and later processing. Do not replace a PDF or EPUB source with Docling output.
+- Extract title, author, source type, byte size, and searchable text when available. If the source has no title, use a cleaned original filename. If the source has no author, show `Unknown author`. Do not create bibliographic values that the source does not provide.
+- If validation or source storage fails, set the import job to `failed` and show the failure reason. Do not publish a library card for that job.
+- After successful validation, source storage, and extraction, set the import job to `ready` and publish the document card.
+- If Docling extraction fails for a valid, stored PDF or EPUB, set the document to `ready_with_warning`. Keep the source available, show an indexing warning, and provide a retry action. Do not claim that unavailable extracted text is searchable.
+- On an extraction retry, keep the source and card available. If the retry succeeds, set the document to `ready` and clear the indexing warning. If the retry fails, keep `ready_with_warning` and show the new error.
+- Generate or extract a cover or first-page thumbnail. Associate the generated artifact with the document ID.
+- If thumbnail generation fails, keep the valid document in the library and show artwork for its source type.
+- Reconcile `pending` and `processing` jobs after an application restart. Resume work when its stored source is available; otherwise mark the job `failed` with a reason.
+- Show `pending`, `processing`, and `failed` jobs in a header import drawer. Send import-state changes through Server-Sent Events (SSE). After the SSE connection returns, refresh job and catalog state through the normal API.
+- Run conversion and image processing in a background job after the upload request returns. Reject uploads above the configured size limit with a clear error. Enforce configured conversion time and concurrency limits; record a time-limit failure in the affected import job without changing existing documents.
 
 ## Library view
 
-- Use VDL's centered, responsive thumbnail-card layout and visual language. Keep book covers legible within the card's preview area; use a neutral background for portrait artwork.
-- Each card shows the title, author when known, a three-dot Info/action menu, and an actionable thumbnail. In this slice, activation opens an authenticated document detail with access to the preserved original. Feature 0003 changes activation to the in-app reader. A card stays usable when its thumbnail is missing.
-- Put a compact `TYPE · N pages` badge in the lower-right corner of the thumbnail, in the position of VDL's resolution badge. PDF uses the document's actual page count. EPUB uses `~N pages` for a stable estimate and labels it as estimated; if no defensible count exists, show `EPUB · pages unknown`. Docling JSON uses an exact count only when it contains stable page data, otherwise `DOCLING · pages unknown`. Do not present viewport-dependent pagination as an exact stored fact.
-- Derive the EPUB estimate once from successfully extracted text as `ceil(word_count / 300)`, with a minimum of one for nonempty text. Mark it unknown when extraction yields no words. Store the result so a new screen size does not silently change the library badge.
-- Provide a header search field that filters by title, author, and original filename, case-insensitively. Include an empty-result state and preserve keyboard access. Feature 0005 extends search to tags and document text.
-- Show total catalog count in the fixed footer. Use server-side pagination or bounded loading so a large catalog does not make the initial page unresponsive.
-- The Info menu shows source type, title, author, size, import status, and import error when applicable. Later editing and organization actions belong to Feature 0005.
+- Use the centered, responsive thumbnail-card layout and visual language of the current VDL library. Keep portrait covers legible against a neutral preview background.
+- Show the title and author on each document card. Put a three-dot Info menu and an actionable thumbnail on each card. Keep the thumbnail action usable when generated artwork is missing.
+- Open an authenticated document detail from a card. Give the detail view access to the preserved source. Feature 0003 changes card activation to the in-app reader.
+- Place a `TYPE · N pages` badge in the lower-right corner of the thumbnail, where VDL places its resolution badge. Show a PDF's actual page count as exact.
+- For an EPUB with extracted text, calculate an estimated page count once as `ceil(word_count / 300)`, with a minimum of one for nonempty text. Store the estimate and display it as `EPUB · ~N pages` with accessible wording that says the count is estimated. If extraction yields no words, display `EPUB · pages unknown`.
+- For DoclingDocument JSON, display an exact page count only when the source contains stable page data. Otherwise display `DOCLING · pages unknown`. Do not store viewport-dependent pagination as an exact count.
+- Provide a header search field that matches title, author, and original filename without regard to letter case. Show an empty-result message when no document matches. Keep search and card actions keyboard accessible. Feature 0005 adds tags and document-text search.
+- Show the total number of library documents in the fixed footer. Limit each catalog response to the configured maximum page size and load additional pages on demand.
+- Show source type, title, author, byte size, import state, and any import or indexing error in the Info menu. Feature 0005 adds editing and organization actions.
 
-## API boundary
+## API and access boundary
 
-- Give the catalog API a stable document ID and fields for title, author, type, page count, count kind (`exact`, `estimated`, or `unknown`), thumbnail availability, and import state. The reader, preview, and organization features consume this record rather than parsing card markup.
-- Serve originals and generated thumbnails only through authenticated, document-ID-based routes. Resolve stored paths server-side, verify they remain inside managed storage, and check authorization before sending bytes.
-- Keep upload, conversion, and image processing off the request path when work can exceed a normal HTTP request. Limit upload size and processing resources, and surface failure without corrupting existing catalog entries.
+- Return the stable document ID, title, author, source type, page count, count kind (`exact`, `estimated`, or `unknown`), thumbnail availability, and import state from the catalog API. Later reader, preview, and organization features use this record.
+- Serve source files and generated thumbnails through authenticated routes that address a document ID. Resolve stored paths on the server, verify that each resolved path stays inside managed storage, and check access before sending bytes.
+- Reject anonymous requests to list or search documents and to retrieve source files or thumbnails.
 
-## Acceptance criteria
+## Acceptance criteria and verification
 
-- A signed-in user imports a PDF, EPUB, and valid DoclingDocument JSON file, sees one card for each, searches by title/author/filename, and can access each original from its card.
-- A 12-page PDF shows `PDF · 12 pages`; an EPUB badge marks any derived count with `~` and accessible estimated wording.
-- Missing covers and missing metadata use visible fallbacks; a corrupt file produces a failed import state and no ready document. A valid source remains openable with a visible indexing warning when Docling extraction fails.
-- Anonymous requests cannot list, search, or retrieve source files or thumbnails. Path-manipulated IDs cannot escape managed storage.
-- Restarting during conversion leaves a recoverable or clearly failed job, and the original library files remain associated with the correct records.
+| ID | Observable result | Verification |
+| --- | --- | --- |
+| AC-01 | A signed-in user uploads a valid PDF, EPUB, and DoclingDocument JSON file. Each source has a stable document ID and appears as one card after import. The PDF and EPUB fixture cards show generated thumbnails. Each card opens an authenticated detail that gives access to the preserved source. | Backend import and source-route tests; browser upload and card checks. |
+| AC-02 | A corrupt or unsupported upload produces a `failed` job with a reason and no library card. The import drawer shows `pending`, `processing`, and `failed` jobs as applicable. | Backend validation and job-state tests; browser import-drawer check. |
+| AC-03 | A valid PDF or EPUB remains openable when Docling extraction fails. Its card and Info menu show `ready_with_warning` and an indexing warning; unavailable extracted text is not reported as searchable. A successful retry clears the warning, and a failed retry keeps the source available. | Force extraction failure and both retry outcomes in import tests; inspect the catalog response, source route, and browser warning. |
+| AC-04 | Missing source title and author display the cleaned filename and `Unknown author`. A failed thumbnail displays source-type artwork without disabling the card. | Import fixtures with missing metadata and a forced thumbnail failure; inspect the card and Info menu. |
+| AC-05 | A 12-page PDF displays `PDF · 12 pages` with count kind `exact`. An EPUB with 601 extracted words displays `EPUB · ~3 pages` with count kind `estimated` and accessible estimated wording. An EPUB with no extracted words and Docling JSON without stable page data display `pages unknown` with count kind `unknown`. | Import fixtures with known page data and word counts; inspect catalog responses and rendered badges. |
+| AC-06 | Header search matches title, author, and original filename regardless of letter case. A query with no matches shows an empty-result message. Search and card actions work with a keyboard. | Browser search and keyboard checks against a catalog fixture. |
+| AC-07 | The footer shows the total catalog count. The first catalog response contains no more than the configured maximum page size, and additional documents load on demand. Cards remain usable at 390 px and 1280 px viewport widths. | Backend pagination test with more documents than the configured page size; browser count and viewport checks. |
+| AC-08 | Anonymous requests cannot list, search, or retrieve documents or thumbnails. A manipulated document ID cannot read a file outside managed storage. | Backend authentication, authorization, and path-manipulation tests. |
+| AC-09 | After an application restart during processing, each affected job resumes from its stored source or becomes `failed` with a reason. Existing source files remain associated with their document IDs. | Restart the app with `pending` and `processing` job fixtures; inspect job states, document IDs, and source routes. |
+| AC-10 | Import-state changes reach an open browser through SSE. After the SSE connection returns, the browser refreshes jobs and cards from the API. | Browser check with a controlled SSE disconnect and reconnect. |
+| AC-11 | An upload above the configured size limit returns a clear error. A conversion that exceeds the configured time limit produces a `failed` job with a reason and leaves existing catalog records and source files intact. | Backend tests with reduced upload and conversion time limits. |
+| AC-12 | The library cards use VDL's centered layout, portrait preview treatment, lower-right badge position, and Info-menu pattern. | Compare Tomeshed and current VDL browser screenshots at 390 px and 1280 px widths. |
 
-Sources: [Docling supported formats](https://docling-project.github.io/docling/usage/supported_formats/), [DocumentConverter API](https://docling-project.github.io/docling/reference/document_converter/), [W3C EPUB pagination guidance](https://www.w3.org/TR/epub-a11y-explain-12/).
+## Reference and boundary
+
+Inspect the current VDL implementation when implementing a comparable flow: `VDL/vdl.py` for SQLite, file access, and SSE; `VDL/templates/index.html`, `VDL/static/app.js`, and `VDL/static/styles.css` for cards and the import drawer; and `VDL/tests/` for verification patterns. Use the current source when a VDL feature document differs from the implementation. Keep all Tomeshed changes outside `VDL/`.
+
+Docling supports PDF, EPUB, and Docling JSON input and exports structured JSON; its output is not a PDF or EPUB replacement. EPUB pagination can vary with layout, so the library labels a derived count as estimated. Sources: [Docling supported formats](https://docling-project.github.io/docling/usage/supported_formats/), [DocumentConverter API](https://docling-project.github.io/docling/reference/document_converter/), [W3C EPUB pagination guidance](https://www.w3.org/TR/epub-a11y-explain-12/).

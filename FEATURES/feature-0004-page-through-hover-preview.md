@@ -5,33 +5,65 @@
 **Last refined:** 2026-10-10  
 **Depends on:** Feature 0003
 
-## Decision summary
+## Outcome
 
-When a user hovers over a ready document thumbnail, show an interactive speech bubble beside the card. It previews nearby content and lets the user page forward and back before opening the full reader. Preview navigation is temporary and never changes saved reading progress.
+Let a signed-in user inspect nearby document content from a library card before opening the reader. Show an interactive preview bubble beside the card, with controls to move forward and back. Keep preview navigation separate from the saved reading position and completion state defined in Feature 0003.
 
-## Interaction and visual design
+## Scope and terms
 
-- Anchor the bubble to the hovered thumbnail with a visible pointer triangle, as in VDL's card popovers. Prefer the side with available space; flip or constrain it within the viewport on narrow screens. Keep it above the fixed footer and below the fixed header.
-- Start at the user's saved reading position, or at the beginning if the document is unread. Show a page/section indicator and compact Previous and Next controls with disabled end states.
-- Preview PDF pages as reduced, legible page images or canvases from the original. Preview EPUB and Docling documents as bounded content slices from the same reading order used by the full reader. Label EPUB slices as preview locations rather than exact publisher pages unless source page markers exist.
-- Keep the bubble open while the pointer moves from the thumbnail into its controls. Close it when pointer/focus leaves the card and bubble, on Escape, when the reader opens, or when the card disappears after a filter change.
-- Make the thumbnail's primary click open the full reader at the saved reading position. Paging within the bubble changes only its local preview cursor. An explicit `Read here` control may open the reader at the displayed preview location without first overwriting saved progress.
-- Expose the same preview with keyboard focus and a labelled Preview action on touch devices. Give all controls accessible names and visible focus; avoid hover-only access to the feature.
+- Use **preview bubble** for the speech-bubble panel anchored to a document thumbnail.
+- Use **preview cursor** for the location displayed in the preview bubble. Keep the preview cursor in browser state; do not save it as a reading position.
+- Show previews for Feature 0002 documents with import state `ready` or `ready_with_warning`.
+- Use Feature 0003's source reading order and per-user saved reading position to choose preview content.
+- Keep the full reading session, its progress writes, and its completion actions in Feature 0003.
 
-## Delivery and performance
+## Opening and navigation
 
-- Load preview content on demand for the active card, with a small cache and bounded page resolution. Do not convert the entire document or render every page on each hover.
-- Serve preview content through authenticated, document-ID-based routes and the same path and visibility checks as the reader. Do not expose a public generated-image directory.
-- A failed preview shows a small unavailable state while the main document card can still open in the reader. Cancel stale requests when the bubble closes or changes documents.
+- Open the preview bubble when a pointer hovers over a document thumbnail.
+- Provide a labelled `Preview` action on each card. Open the same preview bubble when a user activates `Preview` by keyboard or touch.
+- Start the preview cursor at the current user's saved reading position. If the user has no saved reading position, start at the beginning. If a saved locator cannot be resolved, use Feature 0003's approximate restore location and label it as approximate.
+- Show a location indicator and `Previous` and `Next` controls in the preview bubble. Disable `Previous` at the first preview location and `Next` at the last preview location.
+- On `Previous` or `Next`, change only the preview cursor and displayed content. Keep the library card in place and leave the reader closed.
+- Show one preserved PDF page per preview location as a reduced page image or canvas.
+- Show EPUB and DoclingDocument JSON content slices in the same source order as the reader. Bound each slice by configured text and image limits. Label EPUB slices as preview locations unless the source contains publisher page markers; do not present generated slices as exact source pages.
+- Keep the preview bubble open while the pointer moves from the thumbnail to the bubble and its controls, including across the space between them.
+- Close the preview bubble when both pointer and keyboard focus leave the card and bubble. Close it on Escape, on `Close preview`, when the reader opens, or when filtering removes the originating card.
+- On Escape or `Close preview`, return keyboard focus to the card's `Preview` action when the preview was opened by keyboard or touch and the card remains visible.
+- Open the full reader at the saved reading position when a user activates the thumbnail, even if the preview cursor has moved.
+- If a `Read here` control is provided, open the reader at the preview cursor. Do not write that cursor to saved progress before the reader opens.
 
-## Acceptance criteria
+## Placement and accessibility
 
-- Hovering a ready PDF or EPUB card shows the bubble beside it; Previous and Next change the displayed content without moving the card or opening the reader.
-- A card near any viewport edge keeps the bubble visible without covering the fixed header/footer or trapping its controls off-screen.
-- Keyboard and touch users can open, page through, and dismiss the preview.
-- Previewing never changes persisted reading position or marks an unread book as read. Opening the reader still restores the last saved location.
-- Anonymous users cannot fetch preview content, and repeated hover does not trigger unbounded conversion work.
+- Anchor the preview bubble and its pointer triangle to the originating thumbnail. Prefer the side with enough viewport space; use the other side when it fits better.
+- If neither side fits at the intended width, reduce the bubble width and keep its controls within the viewport. Keep the entire bubble between the fixed header and footer.
+- Keep the bubble's location indicator, `Previous`, `Next`, and `Close preview` controls visible or reachable by scrolling within the bubble.
+- Give the `Preview` action and every bubble control an accessible name. Show visible focus and preserve a keyboard path between the card and bubble.
+- Let touch users open, page through, and dismiss the preview without a hover gesture.
 
-## Boundary
+## Content, access, and failure
 
-This is a lightweight look inside a document, separate from the full reading session and its progress writes.
+- Fetch preview content only for the active document and requested preview location. Do not convert the full document or render every PDF page on each open.
+- Bound the number of cached preview locations and the resolution of rendered PDF previews through explicit configuration. Reuse cached content for repeated visits to the same document and location.
+- Cancel or ignore an outstanding preview response when the bubble closes or a different document becomes active. Do not display a response under another document's card.
+- Serve preview content through authenticated routes addressed by document ID. Apply the reader's server-side document access and managed-storage path checks before sending preview bytes. Do not serve generated preview images from a public directory.
+- If preview content cannot be loaded or rendered, show `Preview unavailable` inside the bubble. Keep the card's thumbnail action available to open the reader.
+- Do not change the saved reading position or completion state when the bubble opens, pages, closes, or fails.
+- If a document has no saved reading position, do not create one through preview interactions. Feature 0005 derives `unread` from the absence of reader activity; previewing does not change that state.
+
+## Acceptance criteria and verification
+
+| ID | Observable result | Verification |
+| --- | --- | --- |
+| AC-01 | Hovering a `ready` PDF, EPUB, or DoclingDocument JSON thumbnail opens a bubble anchored beside that thumbnail. The bubble starts at the current user's saved reading position, or at the beginning when no position exists. A `ready_with_warning` PDF or EPUB also opens from its preserved source. | Browser checks with all three formats, both applicable import states, and saved and absent positions. |
+| AC-02 | `Previous` and `Next` change the displayed PDF page or EPUB/Docling content slice without moving the card or opening the reader. The first and last locations disable the corresponding control. EPUB slices without publisher page markers use location labels rather than exact page labels. | Browser checks with multi-page and multi-section fixtures, including both ends. |
+| AC-03 | The pointer can move from the thumbnail into the bubble and its controls without closing it. The bubble closes when pointer and focus leave both surfaces, on Escape, on `Close preview`, when the reader opens, and when filtering removes the card. | Browser pointer, keyboard, reader-open, and filter checks. |
+| AC-04 | At 390 px and 1280 px viewport widths, a card near each viewport edge keeps the bubble and its controls inside the viewport between the fixed header and footer. The pointer triangle remains aligned with the originating thumbnail. | Browser viewport checks with edge-card fixtures. |
+| AC-05 | Keyboard and touch users can open the bubble through `Preview`, activate `Previous` and `Next`, and dismiss it. Controls have accessible names and visible focus. Escape or `Close preview` returns focus to `Preview` when the card remains visible. | Browser keyboard, touch, and accessibility-tree checks. |
+| AC-06 | Moving the preview cursor does not change the current user's saved reading position or completion state. Previewing a document without a saved position does not create one. Thumbnail activation opens the reader at the saved position. If `Read here` is present, it opens at the preview cursor without a preceding progress write. | Compare position and completion records before and after preview interactions; check the reader start location and position requests. |
+| AC-07 | Anonymous requests cannot retrieve preview content. A manipulated document ID cannot read a file outside managed storage. Generated preview images are not available through a public static path. | Backend authentication and path tests; direct request to a generated-image path. |
+| AC-08 | Repeated opens of the same location use cached content within the configured cache bound. EPUB and Docling slices obey the configured text and image limits; PDF previews obey the configured resolution limit. A single open does not convert the full document or render every PDF page. A response from a closed or previous-card preview never appears in the current bubble. | Instrument preview fetch and render calls in browser tests with reduced limits; test a delayed response after switching cards. |
+| AC-09 | A preview request or render failure shows `Preview unavailable`, while activating the card still opens the full reader when its source is readable. | Browser check with a forced preview failure and a readable source. |
+
+## Reference and boundary
+
+Use Feature 0002's authenticated document routes and Feature 0003's source rendering order and saved reading position. Inspect the current VDL Info popover in `VDL/static/app.js` and `VDL/static/styles.css` for viewport positioning and its pointer triangle. VDL anchors Info above or below a menu; this preview anchors beside a thumbnail. Keep all Tomeshed changes outside `VDL/`.
