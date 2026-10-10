@@ -1,0 +1,9 @@
+.git
+.venv
+VDL
+data
+tests
+FEATURES
+__pycache__
+.pytest_cache
+*.pyc

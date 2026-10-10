@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ 'Set administrator password' if setup else 'Sign in' }} · Tomeshed</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=version) }}">
+  <script>try { const t=localStorage.getItem('theme') || 'system'; document.documentElement.dataset.theme=t==='system' && matchMedia('(prefers-color-scheme: dark)').matches?'dark':t; } catch (_) {}</script>
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <div class="auth-brand" aria-hidden="true">▤</div>
+    <h1>{{ 'Set administrator password' if setup else 'Sign in to Tomeshed' }}</h1>
+    <p>{{ 'Create a password before opening the library.' if setup else 'Your reading library is ready when you are.' }}</p>
+    {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}
+    <form class="auth-form" method="post" action="{{ url_for('login') }}">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required value="{{ setup.username if setup else '' }}" {{ 'readonly' if setup else '' }}>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="{{ 'new-password' if setup else 'current-password' }}" required minlength="{{ 8 if setup else 1 }}">
+      {% if setup %}
+      <label for="password_confirmation">Confirm password</label>
+      <input id="password_confirmation" name="password_confirmation" type="password" autocomplete="new-password" required minlength="8">
+      {% endif %}
+      <button type="submit">{{ 'Set password and open library' if setup else 'Sign in' }}</button>
+    </form>
+  </main>
+</body>
+</html>

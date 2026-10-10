@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ document.title }} · Tomeshed</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=version) }}">
+</head>
+<body class="document-detail-page">
+  <main class="document-detail">
+    <a href="/">← Back to library</a>
+    <div class="document-detail-content">
+      <div class="detail-art">{% if document.thumbnail_available %}<img src="{{ url_for('document_thumbnail', document_id=document.id) }}" alt="">{% else %}<span>{{ document.source_type|upper }}</span>{% endif %}</div>
+      <div><p class="eyebrow">{{ document.source_type|upper }}</p><h1>{{ document.title }}</h1><p>{{ document.author }}</p><p>{{ document.byte_size }} bytes</p>
+      {% if document.error %}<p class="message error">{{ document.error }}</p>{% endif %}
+      <p><a class="primary detail-action" href="{{ url_for('document_source', document_id=document.id) }}" target="_blank" rel="noopener">Open source</a> <a href="{{ url_for('document_source', document_id=document.id, download=1) }}">Download source</a></p></div>
+    </div>
+  </main>
+</body>
+</html>

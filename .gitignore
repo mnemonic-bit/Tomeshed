@@ -1,1 +1,9 @@
+.venv/
 VDL/
+data/
+__pycache__/
+.pytest_cache/
+*.pyc
+playwright-report/
+test-results/
+FEATURES/evidence/

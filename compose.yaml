@@ -1,0 +1,30 @@
+services:
+  tomeshed:
+    build: .
+    ports:
+      - "${TOMESHED_PORT:-5000}:5000"
+    volumes:
+      - tomeshed-data:/data
+      - tomeshed-documents:/library
+      - ${TOMESHED_INGEST_HOST_DIR:-./ingest}:/ingest:ro
+    environment:
+      - TOMESHED_INGEST_DIR
+      - TOMESHED_INGEST_SCAN_SECONDS=${TOMESHED_INGEST_SCAN_SECONDS:-10}
+      - TOMESHED_INGEST_SETTLE_SECONDS=${TOMESHED_INGEST_SETTLE_SECONDS:-60}
+      - TOMESHED_URL_CONNECT_TIMEOUT_SECONDS=${TOMESHED_URL_CONNECT_TIMEOUT_SECONDS:-10}
+      - TOMESHED_URL_TOTAL_TIMEOUT_SECONDS=${TOMESHED_URL_TOTAL_TIMEOUT_SECONDS:-300}
+      - TOMESHED_URL_ALLOWED_CIDRS
+    healthcheck:
+      test: ["CMD-SHELL", "python /app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  tomeshed-data:
+  tomeshed-documents:

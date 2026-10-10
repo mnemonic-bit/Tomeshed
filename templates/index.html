@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tomeshed · Reading library</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='book.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=version) }}">
+  <script>try { const t=localStorage.getItem('theme') || 'system'; document.documentElement.dataset.theme=t==='system' && matchMedia('(prefers-color-scheme: dark)').matches?'dark':t; } catch (_) {}</script>
+</head>
+<body data-role="{{ user.role }}">
+  <header class="app-header">
+    <h1 class="app-title"><img src="{{ url_for('static', filename='book.svg') }}" alt="" width="28" height="28"><span>Tomeshed</span></h1>
+    <label class="library-search" for="librarySearch"><span class="visually-hidden">Search library</span><input id="librarySearch" type="search" placeholder="Search title, author, filename, or text" autocomplete="off"></label>
+    <div class="header-actions"><button id="chooseFile" class="upload-label" type="button">Add document</button><input id="uploadFile" type="file" accept=".pdf,.epub,.json,application/pdf,application/epub+zip,application/json" multiple hidden><button id="importsButton" type="button" aria-controls="importsDrawer" aria-expanded="false">Imports <span id="activeImportCount"></span></button></div>
+    <div class="account-menu-wrap">
+      <button id="accountMenuButton" class="account-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="current-username">{{ user.name }}</span><span aria-hidden="true">⌄</span></button>
+      <div id="accountMenu" class="account-menu" role="menu" hidden>
+        <button id="settingsMenuItem" class="account-menu-item" type="button" role="menuitem">Settings</button>
+        <button id="logoutMenuItem" class="account-menu-item danger" type="button" role="menuitem">Log Out</button>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section id="libraryPage" class="library-page">
+      <div class="library-heading"><div><p class="eyebrow">Your library</p><h2>Books and documents</h2></div>{% if user.role == 'admin' %}<button id="bulkClearButton" type="button">Clear library</button>{% endif %}</div>
+      <div class="catalog-tools">
+        <button id="filtersToggle" type="button" aria-controls="catalogFilters" aria-expanded="false">Filters</button>
+        <label>Sort <select id="catalogSort"><option value="newest">Newest first</option><option value="favorite">Favorites first</option></select></label>
+        <button id="clearFilters" type="button">Clear filters</button>
+      </div>
+      <div id="catalogFilters" class="catalog-filters" hidden>
+        <label>Source type <select id="filterType"><option value="">Any type</option><option value="pdf">PDF</option><option value="epub">EPUB</option><option value="docling">Docling</option></select></label>
+        <label>Author <input id="filterAuthor" type="search" placeholder="Author contains" autocomplete="off"></label>
+        <label>Favorite <select id="filterFavorite"><option value="">Any</option><option value="true">Favorites</option><option value="false">Not favorites</option></select></label>
+        <label>Reading state <select id="filterReading"><option value="">Any</option><option value="unread">Unread</option><option value="in_progress">In progress</option><option value="finished">Finished</option></select></label>
+        <fieldset><legend>Tags</legend><div id="filterTags" class="filter-tags"></div></fieldset>
+        <label>Tag matching <select id="filterTagMode"><option value="ALL">All selected</option><option value="ANY">Any selected</option></select></label>
+      </div>
+      <p id="activeFilters" class="active-filters" role="status"></p>
+      <p id="libraryError" class="message error" role="alert" hidden></p>
+      <section id="bookshelfArea" class="bookshelf-area" aria-label="Bookshelves">
+        <div class="bookshelf-heading"><h2>My bookshelves</h2><button id="createBookshelf" type="button">Create bookshelf</button></div>
+        <div id="ownedBookshelves" class="bookshelf-list" aria-live="polite"></div>
+        <h2>Shared with me</h2><div id="sharedBookshelves" class="bookshelf-list" aria-live="polite"></div>
+      </section>
+      <div id="libraryEmpty" class="empty-library"><div class="empty-book" aria-hidden="true">▤</div><h3 id="libraryEmptyTitle">No books or PDFs yet</h3><p id="libraryEmptyText">Add a PDF, EPUB, or DoclingDocument JSON file to start your library.</p></div>
+      <div id="documentGrid" class="document-grid" aria-live="polite"></div>
+      <button id="loadMoreDocuments" class="load-more" type="button" hidden>Load more documents</button>
+    </section>
+    <section id="settingsPage" class="settings-page" hidden>
+      <div class="settings-page-header"><button id="settingsBack" class="settings-back" type="button" aria-label="Return to library">←</button><h2>Settings</h2></div>
+      <label class="settings-search" for="settingsSearchInput"><span class="visually-hidden">Search settings</span><input id="settingsSearchInput" type="search" placeholder="Search settings" autocomplete="off"></label>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings sections"><button type="button" data-target="settings-general">General</button>{% if user.role == 'admin' %}<button type="button" data-target="settings-users">Users</button>{% endif %}</nav>
+        <div class="settings-content">
+          <p id="settingsError" class="message error" role="alert" hidden></p>
+          <p id="settingsSuccess" class="message success" role="status" hidden></p>
+          <section id="settings-general" class="settings-section" data-search="general theme appearance light dark system browser colors">
+            <h3>General</h3><p class="section-intro">Choose how Tomeshed looks on your device.</p>
+            <div class="setting-item" data-search="theme appearance light dark system browser color scheme">
+              <div class="setting-copy"><label for="prefTheme">Theme</label><span>Use a light, dark, or system-matched appearance.</span></div>
+              <select id="prefTheme"><option value="system">System (follow OS setting)</option><option value="light">Light</option><option value="dark">Dark</option></select>
+            </div>
+            <div class="settings-actions"><button id="saveTheme" type="button" class="primary">Save theme</button></div>
+          </section>
+          {% if user.role == 'admin' %}
+          <section id="settings-users" class="settings-section" data-search="users accounts administrators add suspend reactivate reset password remove">
+            <h3>Users</h3><p class="section-intro">Manage who can open this reading library.</p>
+            <div id="userList" class="user-list" aria-live="polite"></div>
+            <h4>Add account</h4>
+            <form id="addUserForm" class="add-user-form">
+              <label>Username<input name="username" required autocomplete="off" maxlength="80"></label>
+              <label>Display name<input name="name" autocomplete="off"></label>
+              <label>Password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+              <label>Role<select name="role"><option value="normal">Normal</option><option value="admin">Administrator</option></select></label>
+              <button class="primary" type="submit">Add account</button>
+            </form>
+          </section>
+          {% endif %}
+          <p id="settingsNoResults" class="settings-no-results" role="status" hidden>No settings match your search.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <dialog id="bookshelfDialog" class="bookshelf-dialog" aria-labelledby="bookshelfDialogTitle"><div class="bookshelf-dialog-head"><h2 id="bookshelfDialogTitle">Bookshelf</h2><button id="closeBookshelfDialog" type="button" aria-label="Close bookshelf">×</button></div><p id="bookshelfStatus" role="status"></p><div id="bookshelfDialogBody"></div></dialog>
+  <section id="reader" class="reader" role="dialog" aria-modal="true" aria-labelledby="readerTitle" hidden>
+    <header class="reader-toolbar">
+      <button id="readerClose" type="button">Close</button>
+      <h2 id="readerTitle"></h2>
+      <span id="readerPosition" role="status">Opening…</span>
+      <div class="reader-controls">
+        <button id="readerPrevious" type="button" aria-label="Previous page or section">Previous</button>
+        <button id="readerNext" type="button" aria-label="Next page or section">Next</button>
+        <button id="readerZoomOut" type="button" aria-label="Zoom out or decrease font size">−</button>
+        <button id="readerZoomIn" type="button" aria-label="Zoom in or increase font size">+</button>
+        <button id="readerFinished" type="button">Mark finished</button>
+        <button id="readerStartOver" type="button">Start over</button>
+      </div>
+    </header>
+    <nav id="readerToc" class="reader-toc" aria-label="Table of contents" hidden></nav>
+    <div id="readerScroll" class="reader-scroll" tabindex="0"><div id="readerContent" class="reader-content"></div></div>
+    <p id="readerError" class="reader-error" role="alert" hidden></p>
+  </section>
+  <aside id="previewBubble" class="preview-bubble" role="region" aria-label="Document preview" hidden>
+    <div class="preview-toolbar"><span id="previewPosition" role="status">Loading preview…</span><button id="previewClose" type="button" aria-label="Close preview">×</button></div>
+    <div id="previewContent" class="preview-content"></div>
+    <div class="preview-controls"><button id="previewPrevious" type="button" aria-label="Previous preview location">Previous</button><button id="previewNext" type="button" aria-label="Next preview location">Next</button></div>
+  </aside>
+  <div id="fileDropTarget" class="file-drop-target" role="status" hidden><strong>Drop documents to import</strong><span>PDF, EPUB, or DoclingDocument JSON</span></div>
+  <aside id="importsDrawer" class="imports-drawer" aria-label="Import jobs" hidden><div class="drawer-heading"><h2>Imports</h2><button id="closeImports" type="button" aria-label="Close imports">×</button></div><form id="urlImportForm" class="url-import-form"><label for="importUrl">Direct PDF or EPUB URL</label><input id="importUrl" type="url" placeholder="https://example.com/book.pdf" required><button type="submit">Import URL</button></form><p id="importError" class="message error" role="alert" hidden></p><div id="importJobList" class="job-list"></div></aside>
+  <footer id="versionFooter" class="version-footer" data-ui-version="{{ version }}">
+    <span id="libraryCount">0 documents</span><span aria-hidden="true"> · </span>
+    <span id="connectionStatus" role="status">Checking connection…</span><span aria-hidden="true"> · </span><span>UI v{{ version }}</span><span aria-hidden="true"> · </span><span id="apiVersion">API checking…</span><span aria-hidden="true"> · </span><span id="apiUptime">Uptime checking…</span>
+    <span id="versionWarning" class="version-warning" hidden><span id="versionWarningText"></span> <a href="{{ url_for('index') }}">Refresh page</a></span>
+  </footer>
+  <script src="{{ url_for('static', filename='app.js', v=version) }}" defer></script>
+  <script src="{{ url_for('static', filename='reader.js', v=version) }}" defer></script>
+  <script src="{{ url_for('static', filename='preview.js', v=version) }}" defer></script>
+  <script src="{{ url_for('static', filename='bookshelves.js', v=version) }}" defer></script>
+</body>
+</html>

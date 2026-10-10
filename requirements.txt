@@ -1,0 +1,4 @@
+Flask>=3.1,<4
+docling-slim[convert-core,format-html,format-pdf,format-pdf-pypdfium2]>=2.100,<3
+pypdf>=5,<7
+soupsieve>=2.5,<3

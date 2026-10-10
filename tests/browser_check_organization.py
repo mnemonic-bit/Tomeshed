@@ -1,0 +1,317 @@
+"""Feature 0005 browser and existing-database migration checks."""
+
+import json
+import os
+import socket
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+from urllib.request import Request, urlopen
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from playwright.sync_api import sync_playwright
+from test_documents import pdf_bytes
+from test_reader import epub_fixture, docling_fixture
+
+
+ARTIFACTS = Path("/tmp/tomeshed-feature-0005-browser")
+ARTIFACTS.mkdir(exist_ok=True)
+
+
+def seed_legacy_database(folder):
+    storage = folder / "storage" / "sources"
+    storage.mkdir(parents=True)
+    database = folder / "legacy.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("""CREATE TABLE documents (
+            id TEXT PRIMARY KEY, original_filename TEXT NOT NULL, source_path TEXT NOT NULL,
+            source_type TEXT NOT NULL, title TEXT NOT NULL, author TEXT NOT NULL,
+            byte_size INTEGER NOT NULL, search_key TEXT NOT NULL, text_content TEXT NOT NULL DEFAULT '',
+            page_count INTEGER, count_kind TEXT NOT NULL, thumbnail_path TEXT, artifact_path TEXT,
+            state TEXT NOT NULL, error TEXT, created_at REAL NOT NULL)""")
+        for index in range(7):
+            document_id = f"book{index:02d}"
+            source = pdf_bytes(index + 1)
+            (storage / f"{document_id}.source").write_bytes(source)
+            conn.execute("""INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                document_id, f"Source_{index}.pdf", f"sources/{document_id}.source", "pdf", f"Book {index}",
+                "Ada" if index % 2 == 0 else "Bob", len(source), f"book {index} ada", "indexed moon" if index == 2 else "",
+                index + 1, "exact", None, None, "ready_with_warning" if index == 6 else "ready",
+                "Indexing warning: test" if index == 6 else None, 100 + index))
+        for document_id, kind, content, count, basis in (
+            ("older-epub", "epub", epub_fixture(), 3, "estimated"),
+            ("older-docling", "docling", docling_fixture(extra=0), None, "unknown"),
+        ):
+            (storage / f"{document_id}.source").write_bytes(content)
+            conn.execute("""INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                document_id, f"{document_id}.{kind}", f"sources/{document_id}.source", kind,
+                f"Older {kind}", "Older author", len(content), f"older {kind}", "", count, basis,
+                None, None, "ready", None, 50))
+        assert "favorite" not in [row[1] for row in conn.execute("PRAGMA table_info(documents)")]
+    return database
+
+
+def ids(page):
+    return page.locator(".document-card").evaluate_all("cards => cards.map(card => card.dataset.documentId)")
+
+
+def card(page, title):
+    return page.locator(".document-card").filter(has=page.locator("h3", has_text=title))
+
+
+def main():
+    with tempfile.TemporaryDirectory() as temporary:
+        folder = Path(temporary)
+        database = seed_legacy_database(folder)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        env = dict(os.environ, TOMESHED_DB=str(database), TOMESHED_LIBRARY_DIR=str(folder / "storage"),
+                   TOMESHED_CATALOG_PAGE_SIZE="2", HOST="127.0.0.1", PORT=str(port), PYTHONDONTWRITEBYTECODE="1")
+        server = subprocess.Popen([sys.executable, "tomeshed.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        checks = {}
+        try:
+            for _ in range(100):
+                try:
+                    with urlopen(base + "/api/health", timeout=.2): break
+                except Exception: time.sleep(.1)
+            else: raise AssertionError("Server did not start")
+            with sqlite3.connect(database) as conn:
+                assert {"favorite", "corrected_title", "corrected_author"} <= {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
+                assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 9
+            checks["migration"] = "passed"
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(viewport={"width": 1280, "height": 850})
+                page = context.new_page()
+                page.on("console", lambda message: print("BROWSER", message.type, message.text))
+                page.on("pageerror", lambda error: print("PAGE ERROR", error))
+                page.goto(base + "/login")
+                page.locator("#password").fill("browser-password")
+                page.locator("#password_confirmation").fill("browser-password")
+                page.get_by_role("button", name="Set password and open library").click()
+                page.wait_for_url(base + "/")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2", timeout=10000)
+                page.wait_for_function("document.querySelectorAll('.document-new-badge').length === 2")
+                checks["unread_badges"] = "passed"
+                # Tag spelling, reuse, suggestions, and final association cleanup.
+                book6 = card(page, "Book 6")
+                book6.get_by_role("button", name="Info for Book 6").click()
+                info_text = book6.locator(".document-info").inner_text()
+                for field in ("Original filename: Source_6.pdf", "Source type: PDF", "Size:", "Page count: 7 (exact)", "Imported:", "Import state: ready_with_warning", "Indexing warning: test", "Last read: Never"):
+                    assert field in info_text
+                book6.get_by_role("textbox", name="Add tag").fill("  History   ")
+                book6.get_by_role("button", name="Add tag", exact=True).click()
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book06] .document-tags').textContent.includes('History')")
+                page.get_by_role("button", name="Load more documents").click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length >= 3")
+                book5 = card(page, "Book 5")
+                book5.get_by_role("button", name="Info for Book 5").click()
+                assert book5.locator(".document-tag-suggestions").get_by_role("button", name="History").count() == 1
+                book5.get_by_role("textbox", name="Add tag").fill("history")
+                book5.get_by_role("button", name="Add tag", exact=True).click()
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book05] .document-tags').textContent.includes('History')")
+                assert page.evaluate("async () => (await (await fetch('/api/tags')).json()).tags") == ["History"]
+                for document_id in ("book06", "book05"):
+                    item = page.locator(f'.document-card[data-document-id="{document_id}"]')
+                    if not item.locator(".document-info").is_visible(): item.get_by_role("button", name="Info for", exact=False).click()
+                    item.locator(".document-tag-editor").last.get_by_role("button", name="History ×").click()
+                    page.wait_for_function("id => !document.querySelector(`.document-card[data-document-id=${id}] .document-tags`).textContent.includes('History')", arg=document_id)
+                assert page.evaluate("async () => (await (await fetch('/api/tags')).json()).tags") == []
+                book5 = card(page, "Book 5")
+                if not book5.locator(".document-info").is_visible(): book5.get_by_role("button", name="Info for Book 5").click()
+                book5.get_by_role("textbox", name="Add tag").fill("History")
+                book5.get_by_role("button", name="Add tag", exact=True).click()
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book05] .document-tags').textContent.includes('History')")
+                checks["tag_reuse_suggestion"] = "passed"
+                for query, expected in (("Older epub", "Page count: 3 (estimated)"), ("Older docling", "Page count: Unknown (unknown)")):
+                    page.locator("#librarySearch").fill(query)
+                    page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                    item = card(page, query)
+                    item.get_by_role("button", name=f"Info for {query}").click()
+                    assert expected in item.locator(".document-info").inner_text()
+                page.locator("#librarySearch").fill("")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                checks["info_count_basis"] = "passed"
+                # Correct metadata and search; failed mutation leaves confirmed text.
+                book5 = card(page, "Book 5")
+                book5.get_by_role("button", name="Info for Book 5").click()
+                info = book5.locator(".document-info")
+                info.get_by_label("Title").fill("Corrected Atlas")
+                info.get_by_label("Author").fill("Revised Ada")
+                info.get_by_role("button", name="Save metadata").click()
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book05] h3').textContent === 'Corrected Atlas'")
+                assert page.evaluate("async () => (await (await fetch('/api/documents/book05')).json()).original_filename") == "Source_5.pdf"
+                page.locator("#librarySearch").fill("REVISED ADA")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                assert ids(page) == ["book05"]
+                page.locator("#librarySearch").fill("")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                checks["metadata_search"] = "passed"
+                page.route("**/api/documents/book05/metadata", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"controlled metadata rejection"}'))
+                book5 = card(page, "Corrected Atlas")
+                book5.get_by_role("button", name="Info for Corrected Atlas").click()
+                book5.locator(".document-info").get_by_label("Title").fill("Unconfirmed title")
+                book5.locator(".document-info").get_by_label("Author").fill("Unconfirmed author")
+                book5.get_by_role("button", name="Save metadata").click()
+                page.get_by_text("Change was not saved: controlled metadata rejection").wait_for()
+                book5 = card(page, "Corrected Atlas")
+                assert book5.locator(".document-info").is_visible()
+                assert book5.locator(".document-info").get_by_label("Title").input_value() == "Corrected Atlas"
+                assert book5.locator(".document-info").get_by_label("Author").input_value() == "Revised Ada"
+                page.unroute("**/api/documents/book05/metadata")
+                checks["metadata_failure_rollback"] = "passed"
+                page.locator("#filtersToggle").click()
+                page.locator("#filterType").select_option("pdf")
+                page.locator("#filterAuthor").fill("REVISED")
+                page.locator("#filterFavorite").select_option("false")
+                page.locator("#filterReading").select_option("unread")
+                page.locator("#filterTags input[value=History]").check()
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                assert ids(page) == ["book05"]
+                page.wait_for_function("document.querySelector('#activeFilters').textContent.includes('Tags (ALL): History')")
+                assert "Tags (ALL): History" in page.locator("#activeFilters").inner_text()
+                page.locator("#librarySearch").fill("no document has this exact phrase")
+                page.get_by_text("No matching documents").wait_for()
+                page.locator("#clearFilters").click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                assert page.locator("#activeFilters").inner_text() == "No active filters"
+                checks["combined_filter_clear_empty"] = "passed"
+                # Favorite-first ordering, keyboard activation, and confirmed failure rollback.
+                page.locator("#catalogSort").select_option("favorite")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                page.get_by_role("button", name="Load more documents").click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 4")
+                before = ids(page)
+                target = page.locator('.document-card[data-document-id="book04"] .document-star')
+                page.keyboard.press("Tab"); target.focus()
+                assert target.evaluate("button => getComputedStyle(button).outlineStyle !== 'none'")
+                page.keyboard.press("Enter")
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book04] .document-star').getAttribute('aria-pressed') === 'true'")
+                assert ids(page)[:4] == before
+                assert page.locator("#reader").is_hidden()
+                page.get_by_role("button", name="Load more documents").click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length >= 6")
+                assert len(ids(page)) == len(set(ids(page)))
+                assert set(ids(page)) >= set(before)
+                page.route("**/api/documents/book04/favorite", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"controlled rejection"}'))
+                page.locator('.document-card[data-document-id="book04"] .document-star').click()
+                page.get_by_text("Change was not saved: controlled rejection").wait_for()
+                assert page.locator('.document-card[data-document-id="book04"] .document-star').get_attribute("aria-pressed") == "true"
+                page.unroute("**/api/documents/book04/favorite")
+                page.locator("#catalogSort").select_option("favorite")
+                page.wait_for_function("document.querySelector('.document-card')?.dataset.documentId === 'book04'")
+                checks["favorite_order_rollback_pagination"] = "passed"
+                # A concurrent server event cannot reorder cards during a delayed star save.
+                cookie = next(item["value"] for item in context.cookies() if item["name"] == "session")
+                concurrent = []
+                def publish_favorite():
+                    request = Request(base + "/api/documents/book03/favorite", method="PATCH",
+                                      data=b'{"favorite":true}', headers={"Cookie": f"session={cookie}", "Content-Type": "application/json"})
+                    with urlopen(request, timeout=5) as response:
+                        concurrent.append(response.status)
+                def delay_favorite(route):
+                    worker = threading.Thread(target=publish_favorite); worker.start()
+                    time.sleep(.35); worker.join(timeout=5)
+                    route.continue_()
+                page.route("**/api/documents/book04/favorite", delay_favorite)
+                before = ids(page)
+                page.locator('.document-card[data-document-id="book04"] .document-star').click()
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book04] .document-star').getAttribute('aria-pressed') === 'false'")
+                page.wait_for_function("document.querySelector('.document-card[data-document-id=book03] .document-star')?.getAttribute('aria-pressed') === 'true'")
+                assert concurrent == [200] and ids(page)[:len(before)] == before
+                page.unroute("**/api/documents/book04/favorite")
+                page.locator("#catalogSort").select_option("newest")
+                page.wait_for_function("document.querySelector('.document-card')?.dataset.documentId === 'book06'")
+                page.locator("#catalogSort").select_option("favorite")
+                page.wait_for_function("document.querySelector('.document-card')?.dataset.documentId === 'book03'")
+                checks["delayed_favorite_sse_stable_order"] = "passed"
+                for document_id in ("book05", "book02"):
+                    assert page.evaluate("async id => (await fetch(`/api/documents/${id}/favorite`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorite:true})})).ok", document_id)
+                page.locator("#filterFavorite").select_option("true")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                page.get_by_role("button", name="Load more documents").click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 3")
+                assert ids(page) == ["book05", "book03", "book02"]
+                page.locator('.document-card[data-document-id="book03"] .document-star').click()
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
+                assert ids(page) == ["book05", "book02"]
+                page.locator("#clearFilters").click()
+                checks["filter_removal_stable_order"] = "passed"
+                page.screenshot(path=str(ARTIFACTS / "catalog-1280.png"), full_page=True)
+                # Reader-open state belongs to the first account; preview and Info leave it untouched.
+                page.locator("#librarySearch").fill("Book 6")
+                page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                book6 = card(page, "Book 6")
+                book6.locator(".document-preview-action").click()
+                page.locator("#previewBubble").wait_for(state="visible")
+                page.locator("#previewClose").click()
+                book6.get_by_role("button", name="Info for Book 6").click()
+                assert page.evaluate("async () => (await (await fetch('/api/documents/book06')).json()).reading_state") == "unread"
+                assert page.evaluate("async () => (await (await fetch('/api/documents/book06/progress')).json()).position") is None
+                assert page.evaluate("async () => (await fetch('/api/documents/book06/source?download=1')).ok")
+                book6.locator(".document-open").click()
+                page.locator("#reader").wait_for(state="visible")
+                page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'in_progress'")
+                page.locator("#readerFinished").click()
+                page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'finished'")
+                page.locator("#readerStartOver").click()
+                page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'in_progress'")
+                page.locator("#readerClose").click()
+                assert "Last read: Never" not in card(page, "Book 6").locator(".document-info").inner_text()
+                assert card(page, "Book 6").locator(".document-new-badge").count() == 0
+                checks["reader_state_preview_isolation"] = "passed"
+                page.screenshot(path=str(ARTIFACTS / "reader-state-1280.png"), full_page=True)
+                # Two accounts have separate reader-open state.
+                created = page.evaluate("async () => await (await fetch('/api/users', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'second',password:'second-password',role:'normal'})})).json()")
+                second = browser.new_context(viewport={"width": 390, "height": 800})
+                other = second.new_page(); other.goto(base + "/login")
+                other.locator("#username").fill("second"); other.locator("#password").fill("second-password")
+                other.get_by_role("button", name="Sign in").click(); other.wait_for_url(base + "/")
+                other.locator("#librarySearch").fill("Book 6")
+                other.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                assert card(other, "Book 6").get_by_text("new", exact=True).is_visible()
+                card(other, "Book 6").get_by_role("button", name="Info for Book 6").click()
+                assert "Last read: Never" in card(other, "Book 6").locator(".document-info").inner_text()
+                other.screenshot(path=str(ARTIFACTS / "second-user-390.png"), full_page=True)
+                checks["two_accounts"] = "passed"
+                # A source failure in the normal reader flow cannot create an open.
+                (folder / "storage" / "sources" / "book00.source").unlink()
+                other.locator("#librarySearch").fill("Book 0")
+                other.wait_for_function("document.querySelectorAll('.document-card').length === 1")
+                card(other, "Book 0").locator(".document-open").click()
+                other.locator("#readerError").wait_for(state="visible")
+                assert "Source missing" in other.locator("#readerError").inner_text()
+                assert other.evaluate("async () => (await (await fetch('/api/documents/book00')).json()).reading_state") == "unread"
+                with sqlite3.connect(database) as conn:
+                    assert conn.execute("SELECT COUNT(*) FROM reader_opens WHERE document_id='book00'").fetchone()[0] == 0
+                checks["failed_reader_no_open"] = "passed"
+                browser.close()
+            # Restart the application against the migrated database.
+            server.terminate(); server.wait(timeout=5)
+            server = subprocess.Popen([sys.executable, "tomeshed.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(100):
+                try:
+                    with urlopen(base + "/api/health", timeout=.2): break
+                except Exception: time.sleep(.1)
+            else: raise AssertionError("Server did not restart")
+            with sqlite3.connect(database) as conn:
+                assert conn.execute("SELECT favorite FROM documents WHERE id='book04'").fetchone()[0] == 0
+                assert conn.execute("SELECT corrected_title,corrected_author FROM documents WHERE id='book05'").fetchone() == ("Corrected Atlas", "Revised Ada")
+                assert conn.execute("SELECT name FROM tags").fetchone()[0] == "History"
+            checks["restart_persistence"] = "passed"
+        finally:
+            server.terminate()
+            try: server.wait(timeout=5)
+            except subprocess.TimeoutExpired: server.kill()
+        (ARTIFACTS / "report.json").write_text(json.dumps(checks, indent=2))
+        print(json.dumps(checks, indent=2))
+
+
+if __name__ == "__main__":
+    main()
