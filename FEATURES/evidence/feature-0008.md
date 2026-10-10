@@ -8,6 +8,10 @@
 
 **Follow-up on 2026-10-11:** Bug 0003 records the CodeQL pin correction in `0.2.1`. The AC-03 result below reflects the failed GitHub run before that correction; the corrected workflow has not run on GitHub.
 
+**Follow-up on 2026-10-11:** Bug 0004 records a release-state test fixture that kept the `0.2.0` image label after `VERSION` advanced. The GitHub validation Python stage failed at `0.2.1`. The fixture now reads root `VERSION`, and `./tests/run-all.sh` exited 0 locally at `0.2.2`. A hosted rerun is pending.
+
+**Follow-up on 2026-10-11:** Bug 0005 records the browser reader helper's hardcoded `.venv/bin/python` path. The GitHub validation run passed Python and early browser checks but failed when preview imported the helper. The helper now uses `sys.executable`; the reader and preview checks and `./tests/run-all.sh` exited 0 locally at `0.2.3`. A hosted rerun is pending.
+
 The builder implemented the workflow, container lock, release policy, Podman replacement path, and documentation. The reviewer found one workflow defect: `setup-buildx-action` selected a builder that could not load the multi-platform image into the runner's containerd image store. The coordinator removed that step from `.github/workflows/main.yml`. The reviewer checked the correction against Docker's multi-platform GitHub Actions guidance and reported no unresolved local source finding. The corrected GitHub build path has not run on a GitHub runner.
 
 ## Local checks

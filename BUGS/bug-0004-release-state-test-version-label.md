@@ -24,4 +24,4 @@ Read the root `VERSION` file in the integration test and use its value for the m
 
 ## Verification
 
-The focused test failed before the change. Rerun it and the Python test suite after the change; record exit codes. A new GitHub validation run remains necessary to confirm the hosted gate.
+The focused test failed before the change with the reported `Conflict`. After the change, `.venv/bin/python -m pytest -q tests/test_release_state.py::test_release_state_retry_with_mocked_github_and_registry` exited 0 with one test passed. `.venv/bin/python -m pytest -q tests/test_*.py` exited 0 with 64 tests passed. `./tests/run-all.sh` exited 0 with 64 Python tests, both architecture lock checks, all browser checks, and the isolated shipping-image smoke test. The smoke test confirmed health version `0.2.2`, PDF and EPUB reading, concurrent PDF requests, and persistence after container recreation. A new GitHub validation run remains necessary to confirm the hosted gate.

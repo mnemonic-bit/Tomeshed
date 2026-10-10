@@ -8,3 +8,4 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0002 — Preview browser check scrolled the preview instead of the page](bug-0002-preview-browser-scroll-target.md) — Resolved in `0.2.0`.
 - [Bug 0003 — CodeQL action steps used different versions](bug-0003-codeql-action-version-mismatch.md) — Resolved locally in `0.2.1`; awaiting a GitHub rerun.
 - [Bug 0004 — Release-state test used an outdated version label](bug-0004-release-state-test-version-label.md) — Resolved locally in `0.2.2`; awaiting a GitHub rerun.
+- [Bug 0005 — Browser reader server required a repository virtual environment](bug-0005-browser-reader-server-venv-path.md) — Resolved locally in `0.2.3`; awaiting a GitHub rerun.

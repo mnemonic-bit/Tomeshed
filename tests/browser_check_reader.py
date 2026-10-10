@@ -32,7 +32,7 @@ def port_number():
 def start_server(folder, port):
     environment = dict(os.environ, TOMESHED_DB=str(folder / 'library.db'), TOMESHED_LIBRARY_DIR=str(folder / 'storage'),
                        HOST='127.0.0.1', PORT=str(port), PYTHONDONTWRITEBYTECODE='1')
-    process = subprocess.Popen([str(ROOT / '.venv/bin/python'), 'tomeshed.py'], cwd=ROOT, env=environment,
+    process = subprocess.Popen([sys.executable, 'tomeshed.py'], cwd=ROOT, env=environment,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         try:
