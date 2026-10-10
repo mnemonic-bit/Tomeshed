@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an outcome or use case for Tomeshed.
+title: "[Feature]: "
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Feature requests are considered on a best-effort basis. Opening an issue does not guarantee a response, implementation, support for a use case, or acceptance of an external pull request.
+    - type: textarea
+      id: problem
+      attributes:
+          label: Problem or use case
+          description: Describe the reading or library task that is difficult today.
+      validations:
+          required: true
+    - type: textarea
+      id: outcome
+      attributes:
+          label: Desired outcome
+          description: Explain what should become possible and how success could be observed.
+      validations:
+          required: true
+    - type: textarea
+      id: alternatives
+      attributes:
+          label: Alternatives and constraints
+          description: Note workarounds, document formats, deployment constraints, or compatibility needs.

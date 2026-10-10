@@ -1,0 +1,84 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Tomeshed.
+title: "[Bug]: "
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Issue handling is best effort; a response or resolution time is not guaranteed. Duplicate, unsupported, or insufficiently actionable reports may be closed.
+
+              Do not disclose vulnerabilities here. Use the private reporting link in the issue chooser.
+    - type: input
+      id: version
+      attributes:
+          label: Tomeshed version or commit
+          description: Use the version shown in the page footer or the root VERSION file. Include the Git commit for a source deployment.
+          placeholder: Current VERSION or a full Git commit SHA
+      validations:
+          required: true
+    - type: dropdown
+      id: deployment
+      attributes:
+          label: Deployment method
+          options:
+              - Docker Compose
+              - Podman directly
+              - Native Python
+              - Other
+      validations:
+          required: true
+    - type: textarea
+      id: environment
+      attributes:
+          label: Host and browser
+          description: Include host OS and architecture, container engine if applicable, and browser/version.
+          placeholder: Linux amd64, Podman, Firefox
+      validations:
+          required: true
+    - type: dropdown
+      id: document_format
+      attributes:
+          label: Document format involved
+          options:
+              - PDF
+              - EPUB
+              - DoclingDocument JSON
+              - No document involved
+              - Other or unknown
+      validations:
+          required: true
+    - type: textarea
+      id: reproduction
+      attributes:
+          label: Reproduction steps
+          description: Use a synthetic or publicly shareable document if a file is required.
+          placeholder: |
+              1. Start Tomeshed with ...
+              2. Open ...
+              3. Select ...
+      validations:
+          required: true
+    - type: textarea
+      id: expected
+      attributes:
+          label: Expected behavior
+      validations:
+          required: true
+    - type: textarea
+      id: actual
+      attributes:
+          label: Actual behavior
+      validations:
+          required: true
+    - type: textarea
+      id: logs
+      attributes:
+          label: Sanitized logs or screenshots
+          description: Remove credentials, cookies, private document contents, token-bearing URLs, database data, and identifying paths.
+    - type: checkboxes
+      id: safety
+      attributes:
+          label: Sensitive-data check
+          options:
+              - label: I have removed credentials, private document contents, tokens, cookies, and other sensitive data.
+                required: true
