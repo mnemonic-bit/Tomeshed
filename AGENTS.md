@@ -21,3 +21,7 @@ For any agent-authored output, including session messages, specifications, repor
 Translate VDL's video-specific behavior into document-library requirements as they are defined. Treat downloading videos, playback, transcoding, and the browser extension as prototype details, not assumed features of this app.
 
 Use Docling for document conversion and extraction in Tomeshed. Preserve source files for faithful reading; Docling's structured output is not a PDF/EPUB replacement.
+
+## Implementing the feature plan
+
+When asked to implement the numbered feature plan without further intervention, act as the coordinator and follow `IMPLEMENTATION-WORKFLOW.md`. Spawn the project `feature_builder` and `feature_reviewer` agents for each feature as that workflow directs. Record progress in `IMPLEMENTATION-STATE.md`.
