@@ -3,9 +3,11 @@
 import importlib
 import io
 import json
+import threading
 import time
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 from docling_core.types.doc import BoundingBox, DocItemLabel, DoclingDocument, ProvenanceItem, Size, TableCell, TableData
@@ -113,6 +115,61 @@ def test_pdf_position_validation_restart_shorter_source_and_two_users(module):
     assert resumed.put(f'{base}/progress', json={'locator': {'page': 1, 'offset': 0}, 'percent': 0}).status_code == 404
     assert resumed.get(f'{base}/progress').json['position'] == expected
     assert second_user['id'] != 1
+
+
+def test_concurrent_pdf_pages_do_not_enter_pdfium_together(module, monkeypatch):
+    import reader_service
+
+    first = signed_in(module)
+    second = signed_in(module)
+    document_id = add_document(module, pdf_bytes(1), 'pdf')
+    page_url = f'/api/documents/{document_id}/reader/page/1'
+    active = 0
+    active_lock = threading.Lock()
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    overlap = threading.Event()
+
+    class FakeBitmap:
+        def to_pil(self):
+            return Image.new('RGB', (4, 4), 'white')
+
+    class FakePage:
+        def render(self, **_kwargs):
+            return FakeBitmap()
+
+    class GuardedPdf:
+        def __init__(self, _source):
+            nonlocal active
+            with active_lock:
+                active += 1
+                if active > 1:
+                    overlap.set()
+                    second_entered.set()
+                else:
+                    first_entered.set()
+            if active == 1:
+                second_entered.wait(0.5)
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, _index):
+            return FakePage()
+
+        def close(self):
+            nonlocal active
+            with active_lock:
+                active -= 1
+
+    monkeypatch.setattr(reader_service.pdfium, 'PdfDocument', GuardedPdf)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_request = pool.submit(first.get, page_url)
+        assert first_entered.wait(2)
+        second_request = pool.submit(second.get, page_url)
+        responses = [first_request.result(timeout=3), second_request.result(timeout=3)]
+    assert all(response.status_code == 200 and response.data.startswith(b'\x89PNG') for response in responses)
+    assert not overlap.is_set()
 
 
 def test_epub_source_order_toc_resource_sanitization_and_invalid_locator(module):

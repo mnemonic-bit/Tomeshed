@@ -18,7 +18,7 @@ from flask import abort, g, jsonify, request, send_file
 from PIL import Image
 from werkzeug.exceptions import HTTPException
 
-from reader_service import EpubSanitizer, ReaderFailure, _epub_manifest, _IMAGE_TYPES
+from reader_service import EpubSanitizer, PDFIUM_LOCK, ReaderFailure, _epub_manifest, _IMAGE_TYPES
 
 
 class VisibleCounter(HTMLParser):
@@ -242,9 +242,12 @@ def install_preview(library):
 
     def pdf_metadata(source):
         try:
-            pdf = pdfium.PdfDocument(str(source))
-            count = len(pdf)
-            pdf.close()
+            with PDFIUM_LOCK:
+                pdf = pdfium.PdfDocument(str(source))
+                try:
+                    count = len(pdf)
+                finally:
+                    pdf.close()
             if count < 1:
                 raise ReaderFailure('unsupported_content', 'The PDF has no pages')
             return count
@@ -372,18 +375,19 @@ def install_preview(library):
             height_limit = config('PREVIEW_PDF_MAX_HEIGHT', 32, 1600)
             key = source_key(row, source, ('page', page), (width_limit, height_limit))
             def create():
-                pdf = pdfium.PdfDocument(str(source))
-                try:
-                    if page < 1 or page > len(pdf):
-                        abort(404)
-                    pdf_page = pdf[page - 1]
-                    width, height = pdf_page.get_size()
-                    scale = min(1.0, width_limit / max(1, width), height_limit / max(1, height))
-                    image = pdf_page.render(scale=scale).to_pil()
-                    output = io.BytesIO(); image.save(output, 'PNG')
-                    return output.getvalue()
-                finally:
-                    pdf.close()
+                with PDFIUM_LOCK:
+                    pdf = pdfium.PdfDocument(str(source))
+                    try:
+                        if page < 1 or page > len(pdf):
+                            abort(404)
+                        pdf_page = pdf[page - 1]
+                        width, height = pdf_page.get_size()
+                        scale = min(1.0, width_limit / max(1, width), height_limit / max(1, height))
+                        image = pdf_page.render(scale=scale).to_pil()
+                        output = io.BytesIO(); image.save(output, 'PNG')
+                        return output.getvalue()
+                    finally:
+                        pdf.close()
             data = cached(key, create)
             return send_file(io.BytesIO(data), mimetype='image/png')
         except ReaderFailure as exc:

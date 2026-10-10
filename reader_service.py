@@ -8,6 +8,7 @@ import json
 import math
 import posixpath
 import re
+import threading
 import time
 import zipfile
 from html.parser import HTMLParser
@@ -19,6 +20,10 @@ import pypdfium2 as pdfium
 from docling_core.types.doc import DoclingDocument
 from flask import abort, g, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
+
+
+# PDFium cannot handle simultaneous calls from Flask request threads.
+PDFIUM_LOCK = threading.Lock()
 
 
 class ReaderFailure(Exception):
@@ -255,12 +260,13 @@ def _docling_content(source):
 
 def _pdf_count(source):
     try:
-        pdf = pdfium.PdfDocument(str(source))
-        try:
-            count = len(pdf)
-            pages = [list(pdf[index].get_size()) for index in range(count)]
-        finally:
-            pdf.close()
+        with PDFIUM_LOCK:
+            pdf = pdfium.PdfDocument(str(source))
+            try:
+                count = len(pdf)
+                pages = [list(pdf[index].get_size()) for index in range(count)]
+            finally:
+                pdf.close()
         if count < 1:
             raise ReaderFailure('unsupported_content', 'The PDF has no pages')
         return pages
@@ -363,17 +369,18 @@ def install_reader(library):
             abort(404)
         try:
             source = source_path(row)
-            pdf = pdfium.PdfDocument(str(source))
-            try:
-                if page < 1 or page > len(pdf):
-                    abort(404)
-                image = pdf[page - 1].render(scale=1.5).to_pil()
-                data = io.BytesIO()
-                image.save(data, format='PNG')
-                data.seek(0)
-                return send_file(data, mimetype='image/png', conditional=True)
-            finally:
-                pdf.close()
+            with PDFIUM_LOCK:
+                pdf = pdfium.PdfDocument(str(source))
+                try:
+                    if page < 1 or page > len(pdf):
+                        abort(404)
+                    image = pdf[page - 1].render(scale=1.5).to_pil()
+                    data = io.BytesIO()
+                    image.save(data, format='PNG')
+                    data.seek(0)
+                finally:
+                    pdf.close()
+            return send_file(data, mimetype='image/png', conditional=True)
         except ReaderFailure as exc:
             return failure_response(exc)
         except HTTPException:

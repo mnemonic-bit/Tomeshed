@@ -18,6 +18,7 @@ from playwright.sync_api import sync_playwright
 
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 ARTIFACTS = Path("/tmp/tomeshed-feature-0001-browser")
 ARTIFACTS.mkdir(exist_ok=True)
 
@@ -200,12 +201,12 @@ def main():
                 page.route('**/api/health', health_version)
                 page.evaluate('checkHealth()')
                 page.wait_for_function("document.querySelector('#versionWarning').hidden === false")
-                check('0.1.0' in page.locator('#versionWarning').inner_text() and '9.9.9' in page.locator('#versionWarning').inner_text(), 'both mismatch versions')
+                check(EXPECTED_VERSION in page.locator('#versionWarning').inner_text() and '9.9.9' in page.locator('#versionWarning').inner_text(), 'both mismatch versions')
                 check(page.get_by_role('link', name='Refresh page').is_visible(), 'refresh action')
                 page.unroute('**/api/health', health_version)
                 page.evaluate('checkHealth()')
                 page.wait_for_function("document.querySelector('#versionWarning').hidden === true")
-                check('API v0.1.0' in page.locator('#apiVersion').inner_text(), 'matching version')
+                check(f'API v{EXPECTED_VERSION}' in page.locator('#apiVersion').inner_text(), 'matching version')
                 # The normal visible-page timer must detect a later API change.
                 page.route('**/api/health', health_version)
                 started = time.monotonic()

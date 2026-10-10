@@ -1,6 +1,6 @@
 # Ebook and PDF library
 
-This repository is for Tomeshed, a new ebook and PDF library application. The first app version has not been implemented yet. The numbered implementation plan is in `FEATURES/README.md`.
+This repository contains Tomeshed, an ebook and PDF library application. The numbered implementation plan is in `FEATURES/README.md`.
 
 ## Prototype boundary
 
@@ -9,6 +9,11 @@ This repository is for Tomeshed, a new ebook and PDF library application. The fi
 For structural codebase exploration, use the installed `codebase-memory` skill. Check the current source when a VDL document and implementation disagree.
 
 For any agent-authored output, including session messages, specifications, reports, and state files, follow `AGENT-LANG.md`.
+
+## Feature and bug documentation
+
+- Feature requirements belong in numbered `FEATURES/feature-NNNN-*.md` files. Use `FEATURES/README.md` as the feature index and `FEATURES/evidence/feature-NNNN.md` for implementation evidence.
+- Bug reports and fixes belong in numbered `BUGS/bug-NNNN-*.md` files. Before diagnosing a defect, check `BUGS/BUG-INDEX.md` for an existing report. If none exists, add the next numbered report and link it from the index. Record the observed behavior, reproduction, expected behavior, diagnosis, resolution, verification, and current status; update the report and index when the status changes.
 
 ## Architecture to adapt from VDL
 
@@ -21,6 +26,23 @@ For any agent-authored output, including session messages, specifications, repor
 Translate VDL's video-specific behavior into document-library requirements as they are defined. Treat downloading videos, playback, transcoding, and the browser extension as prototype details, not assumed features of this app.
 
 Use Docling for document conversion and extraction in Tomeshed. Preserve source files for faithful reading; Docling's structured output is not a PDF/EPUB replacement.
+
+## Runtime and deployment
+
+- PDFium concurrency: `pypdfium2` cannot run concurrently across Flask request threads. Hold `reader_service.PDFIUM_LOCK` for every PDFium operation in the web process, from opening a document through closing its PDFium resources. The reader and preview paths share this lock.
+- Podman deployment: follow `PODMAN.md` when building, starting, or replacing the container. Preserve the `tomeshed-data` and `tomeshed-documents` volumes, then check that `/api/health` reports the version in `VERSION`.
+
+## Version changes
+
+Before completing each distinct requested code change, increment the root `VERSION` file. An uncommitted version change from earlier work does not count for a new code change; increment `VERSION` again.
+
+Use semantic versioning for the change's impact:
+
+- Breaking or incompatible API changes increment `MAJOR` and reset `MINOR` and `PATCH`, including when `MAJOR` is zero.
+- Features increment `MINOR` and reset `PATCH`.
+- Bug fixes and other code changes increment `PATCH`.
+
+For a change that includes code and documentation, apply one bump at the highest code impact: `MAJOR`, then `MINOR`, then `PATCH`. Documentation-only changes, including specifications and agent-instruction updates, leave `VERSION` unchanged.
 
 ## Implementing the feature plan
 
