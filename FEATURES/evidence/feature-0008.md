@@ -12,6 +12,8 @@
 
 **Follow-up on 2026-10-11:** Bug 0005 records the browser reader helper's hardcoded `.venv/bin/python` path. The GitHub validation run passed Python and early browser checks but failed when preview imported the helper. The helper now uses `sys.executable`; the reader and preview checks and `./tests/run-all.sh` exited 0 locally at `0.2.3`. A hosted rerun is pending.
 
+**Follow-up on 2026-10-11:** Bug 0006 records a GitHub publication failure after both platform manifests were built: BuildKit rejected `rewrite-timestamp=true` because the Docker exporter also unpacked the image. The workflow now exports an OCI archive with a `docker-container` builder, loads it into Docker, and checks the full-SHA tag before platform smoke tests. Local YAML parsing, build-step shell syntax, and `./tests/run-all.sh` passed at `0.2.4`. The Buildx path is awaiting a hosted rerun.
+
 The builder implemented the workflow, container lock, release policy, Podman replacement path, and documentation. The reviewer found one workflow defect: `setup-buildx-action` selected a builder that could not load the multi-platform image into the runner's containerd image store. The coordinator removed that step from `.github/workflows/main.yml`. The reviewer checked the correction against Docker's multi-platform GitHub Actions guidance and reported no unresolved local source finding. The corrected GitHub build path has not run on a GitHub runner.
 
 ## Local checks

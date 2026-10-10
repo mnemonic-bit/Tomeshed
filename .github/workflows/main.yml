@@ -60,8 +60,9 @@ jobs:
           source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "release=v$version" >> "$GITHUB_OUTPUT"
+          docker buildx create --driver docker-container --use --bootstrap
           docker buildx build --pull --platform linux/amd64,linux/arm64 \
-            --output type=docker,rewrite-timestamp=true \
+            --output "type=oci,dest=$RUNNER_TEMP/candidate.oci.tar,rewrite-timestamp=true" \
             --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
             --metadata-file "$RUNNER_TEMP/build-metadata.json" \
             --provenance=false --sbom=false \
@@ -69,6 +70,8 @@ jobs:
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label "org.opencontainers.image.version=$version" \
             --tag "$image:$GITHUB_SHA" .
+          docker load --input "$RUNNER_TEMP/candidate.oci.tar"
+          docker image inspect "$image:$GITHUB_SHA" >/dev/null
           digest=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/build-metadata.json")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Buildx did not report a manifest digest' >&2; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
