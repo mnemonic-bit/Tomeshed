@@ -6,6 +6,8 @@
 **Version:** `0.2.0`
 **Status:** `blocked` pending GitHub pull-request runs, repository settings, and publication evidence.
 
+**Follow-up on 2026-10-11:** Bug 0003 records the CodeQL pin correction in `0.2.1`. The AC-03 result below reflects the failed GitHub run before that correction; the corrected workflow has not run on GitHub.
+
 The builder implemented the workflow, container lock, release policy, Podman replacement path, and documentation. The reviewer found one workflow defect: `setup-buildx-action` selected a builder that could not load the multi-platform image into the runner's containerd image store. The coordinator removed that step from `.github/workflows/main.yml`. The reviewer checked the correction against Docker's multi-platform GitHub Actions guidance and reported no unresolved local source finding. The corrected GitHub build path has not run on a GitHub runner.
 
 ## Local checks
@@ -23,9 +25,9 @@ The builder implemented the workflow, container lock, release policy, Podman rep
 
 | ID | Result | Evidence or missing verification |
 | --- | --- | --- |
-| AC-01 | inconclusive | `.github/workflows/validation.yml` triggers on pull requests to `main`, grants read-only repository access, and runs `tests/run-all.sh`. No pull-request run exists for this change. |
+| AC-01 | inconclusive | `.github/workflows/validation.yml` triggers on pull requests to `main`, grants read-only repository access, and runs `tests/run-all.sh`. Dependabot pull requests have since run, but a complete validation result for the CodeQL correction has not been inspected. |
 | AC-02 | passed | The complete local gate and isolated shipping-image smoke passed as recorded above. |
-| AC-03 | not_run | `.github/workflows/codeql.yml` defines Python and JavaScript analysis. `.github/REPOSITORY_SETTINGS.md` specifies an active ruleset and actual check-name verification. No workflow checks or failing-pull-request ruleset test exist yet. The public rulesets API returned `[]` on 2026-10-10. |
+| AC-03 | failed | The [CodeQL run on `main`](https://github.com/mnemonic-bit/Tomeshed/actions/runs/38090845155) for commit `94d8e666f419a64da5f35a730ece8ed1f91256fa` failed. The user reported `Loaded a configuration file for version '4.38.0', but running version '4.38.2'`. Bug 0003 records the local `0.2.1` pin correction; a GitHub rerun is pending. The public rulesets API shows ruleset `Protect Main Branch` with `enforcement: disabled` on 2026-10-11. |
 | AC-04 | inconclusive | `.github/workflows/main.yml` makes publication depend on a successful validation job. A controlled failed, cancelled, or skipped `main` gate has not run on GitHub. |
 | AC-05 | not_run | The workflow builds and tests both platforms before pushing. No GitHub platform logs or published multi-platform manifest exist; local Podman cannot exercise the Docker Buildx runner path. |
 | AC-06 | not_run | `scripts/release_policy.py` checks new and unchanged versions. Two successful `main` publication runs and their GitHub/GHCR artifacts do not exist. |
@@ -36,4 +38,4 @@ The builder implemented the workflow, container lock, release policy, Podman rep
 
 ## External blocker and next action
 
-This workspace has no `GITHUB_TOKEN` or `GH_TOKEN`. The new workflows are not on GitHub. The public repository currently has no ruleset and no latest Release. The repository owner must put this change on a pull request, inspect the actual validation and CodeQL check names, apply the active `main` ruleset, merge a passing pull request, make the GHCR package public if its first anonymous pull fails, and inspect both-platform images, tags, release records, SBOMs, and attestations. Rerun the failed publication workflow after package visibility is public. Do not mark Feature 0008 `completed` until the `not_run` and `inconclusive` criteria have passed.
+This workspace has no `GITHUB_TOKEN` or `GH_TOKEN`. The workflows are on GitHub, but the latest observed CodeQL `main` run failed, the `Protect Main Branch` ruleset is disabled, and the public Releases API returns 404 for the latest Release. The repository owner must run the `0.2.1` CodeQL correction on a pull request, confirm both language checks pass, activate the ruleset with the observed check names, and inspect publication of both-platform images, tags, release records, SBOMs, and attestations. If the first anonymous GHCR pull fails, make the package public and rerun publication. Do not mark Feature 0008 `completed` until every failed, `not_run`, and `inconclusive` criterion has passed.

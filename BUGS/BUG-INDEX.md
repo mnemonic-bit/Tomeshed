@@ -6,3 +6,4 @@ Use this index to find open and resolved defects. Each numbered report records t
 
 - [Bug 0001 — Concurrent PDF page requests crashed the server](bug-0001-concurrent-pdf-pages-crashed-server.md) — Resolved in `0.1.1`.
 - [Bug 0002 — Preview browser check scrolled the preview instead of the page](bug-0002-preview-browser-scroll-target.md) — Resolved in `0.2.0`.
+- [Bug 0003 — CodeQL action steps used different versions](bug-0003-codeql-action-version-mismatch.md) — Resolved locally in `0.2.1`; awaiting a GitHub rerun.
