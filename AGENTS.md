@@ -1,6 +1,6 @@
 # Ebook and PDF library
 
-This repository is for a new ebook and PDF library application. The first app version has not been implemented yet.
+This repository is for Tomeshed, a new ebook and PDF library application. The first app version has not been implemented yet. The numbered implementation plan is in `FEATURES/README.md`.
 
 ## Prototype boundary
 
@@ -17,3 +17,5 @@ For structural codebase exploration, use the installed `codebase-memory` skill. 
 - Delivery and verification: `VDL/Dockerfile`, `VDL/compose.yaml`, and `VDL/tests/` show its container setup and testing approach. Build this app's own deployment and tests in the root repository.
 
 Translate VDL's video-specific behavior into document-library requirements as they are defined. Treat downloading videos, playback, transcoding, and the browser extension as prototype details, not assumed features of this app.
+
+Use Docling for document conversion and extraction in Tomeshed. Preserve source files for faithful reading; Docling's structured output is not a PDF/EPUB replacement.
