@@ -8,6 +8,8 @@ This repository is for Tomeshed, a new ebook and PDF library application. The fi
 
 For structural codebase exploration, use the installed `codebase-memory` skill. Check the current source when a VDL document and implementation disagree.
 
+For any agent-authored output, including session messages, specifications, reports, and state files, follow `AGENT-LANG.md`.
+
 ## Architecture to adapt from VDL
 
 - Backend: `VDL/vdl.py` is a Flask app containing HTTP routes, authentication, API behavior, SQLite access and schema migration, and library file handling. Use those flows as examples for the new app's boundaries and data lifecycle.
