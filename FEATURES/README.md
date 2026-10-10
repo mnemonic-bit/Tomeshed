@@ -15,8 +15,9 @@ Feature files follow VDL's `FEATURES/feature-NNNN-description.md` convention. Ea
 | 0005 | [Organize and find](feature-0005-organize-and-find-documents.md) | 0002, 0003 | Tags, favorites, reading state, metadata, and richer filters |
 | 0006 | [Library file workflows](feature-0006-library-file-workflows.md) | 0002 | Drag-and-drop, direct URL and watched-folder ingest, export, and safe cleanup |
 | 0007 | [Personal bookshelves](feature-0007-personal-bookshelves.md) | 0002, 0003 | Ordered collections of books with personal reading continuity |
+| 0008 | [Publish through GitHub](feature-0008-publish-through-github.md) | 0004, 0006 | Validated GHCR images and Releases with an operator-controlled Podman rollout |
 
-Features 0001–0004 establish the requested first reading experience. Features 0005–0007 adapt the remaining VDL library capabilities that fit books and PDFs; each can be planned and built as a separate slice after its listed dependencies.
+Features 0001–0004 establish the requested first reading experience. Features 0005–0007 adapt the remaining VDL library capabilities that fit books and PDFs. Feature 0008 adapts VDL's GitHub validation and image publication after Tomeshed's container workflow exists. Each can be planned and built as a separate slice after its listed dependencies.
 
 ## VDL translation
 
@@ -29,6 +30,7 @@ Features 0001–0004 establish the requested first reading experience. Features 
 | Tags, favorites, view state, filters, Info panel | 0005 |
 | Local upload/export and watched inbox | 0006 |
 | Personal playlists | 0007, as bookshelves |
+| GitHub checks, GHCR images, and Releases | 0008, as Tomeshed validation and container distribution |
 
 Video URL extraction, yt-dlp formats, transcoding, playback controls, continuous or shuffled playback, and the browser extension do not describe reading workflows. They are not carried into these features.
 
