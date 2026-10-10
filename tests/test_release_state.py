@@ -47,8 +47,9 @@ def test_registry_rejects_missing_platform(monkeypatch):
 def test_release_state_retry_with_mocked_github_and_registry(monkeypatch, tmp_path, capsys):
     sha = 'a' * 40
     digest = 'sha256:' + '1' * 64
+    version = (Path(__file__).parents[1] / 'VERSION').read_text(encoding='utf-8').strip()
     labels = {'org.opencontainers.image.revision': sha,
-              'org.opencontainers.image.version': '0.2.0'}
+              'org.opencontainers.image.version': version}
     monkeypatch.setenv('GITHUB_SHA', sha)
     monkeypatch.setenv('GITHUB_REPOSITORY', 'mnemonic-bit/Tomeshed')
     monkeypatch.setenv('GH_TOKEN', 'test-token')
@@ -58,4 +59,6 @@ def test_release_state_retry_with_mocked_github_and_registry(monkeypatch, tmp_pa
     monkeypatch.setattr(release_state, 'image', lambda tag: {'digest': digest, 'labels': labels} if tag == sha else None)
     release_state.main()
     assert (tmp_path / 'outputs').read_text() == 'new_release=true\nsha_tag_exists=true\n'
-    assert json.loads(capsys.readouterr().out)['new_release'] is True
+    result = json.loads(capsys.readouterr().out)
+    assert result['new_release'] is True
+    assert result['version'] == version
