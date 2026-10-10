@@ -1,0 +1,211 @@
+name: Main
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: main-publication
+  cancel-in-progress: false
+
+jobs:
+  validation:
+    name: Validation
+    uses: ./.github/workflows/validation.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish tested image
+    needs: [validation]
+    if: ${{ needs.validation.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker containerd image store
+        uses: docker/setup-docker-action@77e84dbf09b47d1e29270283c22f16145aa85ca1 # v5.4.0
+        with:
+          version: v28.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: arm64
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build both platforms locally
+        id: build
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE,,}"
+          version=$(tr -d '\n' < VERSION)
+          source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "release=v$version" >> "$GITHUB_OUTPUT"
+          docker buildx build --pull --platform linux/amd64,linux/arm64 \
+            --output type=docker,rewrite-timestamp=true \
+            --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+            --metadata-file "$RUNNER_TEMP/build-metadata.json" \
+            --provenance=false --sbom=false \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$version" \
+            --tag "$image:$GITHUB_SHA" .
+          digest=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/build-metadata.json")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Buildx did not report a manifest digest' >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Validate linux/amd64 image
+        env:
+          CONTAINER_ENGINE: docker
+          DOCKER_DEFAULT_PLATFORM: linux/amd64
+          TOMESHED_IMAGE: ${{ steps.build.outputs.image }}:${{ github.sha }}
+        run: tests/container/smoke.sh
+      - name: Validate linux/arm64 image
+        env:
+          CONTAINER_ENGINE: docker
+          DOCKER_DEFAULT_PLATFORM: linux/arm64
+          TOMESHED_IMAGE: ${{ steps.build.outputs.image }}:${{ github.sha }}
+        run: tests/container/smoke.sh
+      - name: Check immutable tag and release state
+        id: policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.build.outputs.image }}
+          CANDIDATE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: python3 scripts/release_state.py
+      - name: Publish main and immutable commit tags
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:main"
+          docker push "$IMAGE:main"
+          if [[ '${{ steps.policy.outputs.sha_tag_exists }}' != true ]]; then docker push "$IMAGE:$GITHUB_SHA"; fi
+      - name: Require anonymous SHA pull
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          anonymous_config="$RUNNER_TEMP/anonymous-docker"
+          mkdir -p "$anonymous_config"
+          printf '{"auths":{}}\n' > "$anonymous_config/config.json"
+          for attempt in {1..12}; do
+            if DOCKER_CONFIG="$anonymous_config" docker pull "$IMAGE:$GITHUB_SHA" >/dev/null 2>&1 &&
+               DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" >/dev/null 2>&1; then exit 0; fi
+            sleep 5
+          done
+          echo 'SHA image is not anonymously pullable; set the GHCR package public and rerun.' >&2
+          exit 1
+      - name: Record manifest and platform digests
+        id: digests
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' > "$RUNNER_TEMP/manifest.json"
+          index=$(jq -r '.digest // empty' "$RUNNER_TEMP/manifest.json")
+          amd64=$(jq -r '.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64") | .digest' "$RUNNER_TEMP/manifest.json")
+          arm64=$(jq -r '.manifests[] | select(.platform.os=="linux" and .platform.architecture=="arm64") | .digest' "$RUNNER_TEMP/manifest.json")
+          for digest in "$index" "$amd64" "$arm64"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Missing digest: $digest" >&2; exit 1; }
+          done
+          [[ "$index" == '${{ steps.build.outputs.digest }}' ]] || { echo 'Published manifest differs from tested image' >&2; exit 1; }
+          printf 'index=%s\namd64=%s\narm64=%s\n' "$index" "$amd64" "$arm64" >> "$GITHUB_OUTPUT"
+          printf 'Manifest %s\namd64 %s\narm64 %s\n' "$index" "$amd64" "$arm64"
+      - name: Generate amd64 SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ steps.build.outputs.image }}@${{ steps.digests.outputs.amd64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-amd64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate arm64 SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ steps.build.outputs.image }}@${{ steps.digests.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest manifest provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.index }}
+          push-to-registry: true
+      - name: Attest amd64 provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.amd64 }}
+          push-to-registry: true
+      - name: Attest amd64 SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
+          push-to-registry: true
+      - name: Attest arm64 provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.arm64 }}
+          push-to-registry: true
+      - name: Attest arm64 SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.build.outputs.image }}
+          subject-digest: ${{ steps.digests.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json
+          push-to-registry: true
+      - name: Publish new version image
+        if: steps.policy.outputs.new_release == 'true'
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          RELEASE: ${{ steps.build.outputs.release }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:$RELEASE"
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker push "$IMAGE:$RELEASE"
+          docker push "$IMAGE:latest"
+          for tag in "$RELEASE" latest; do
+            digest=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+            [[ "$digest" == '${{ steps.digests.outputs.index }}' ]] || { echo "$tag digest conflicts with tested manifest: $digest" >&2; exit 1; }
+          done
+      - name: Create GitHub Release
+        if: steps.policy.outputs.new_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE: ${{ steps.build.outputs.release }}
+          IMAGE: ${{ steps.build.outputs.image }}
+          INDEX_DIGEST: ${{ steps.digests.outputs.index }}
+          AMD64_DIGEST: ${{ steps.digests.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.digests.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          notes=$(printf 'Container manifest: `%s@%s`\n\n- linux/amd64: `%s`\n- linux/arm64: `%s`\n' \
+            "$IMAGE" "$INDEX_DIGEST" "$AMD64_DIGEST" "$ARM64_DIGEST")
+          gh release create "$RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "$RELEASE" \
+            --notes "$notes" --generate-notes --latest

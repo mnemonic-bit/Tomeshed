@@ -249,7 +249,11 @@ def main():
                 first_card = page.locator('.document-card').first
                 first_card.locator('.document-preview').hover()
                 page.locator('#previewBubble').wait_for(state='visible')
-                page.mouse.wheel(0, 600)
+                page.evaluate('''() => {
+                  const anchor = document.querySelector('.document-card .document-preview').getBoundingClientRect();
+                  const header = document.querySelector('.app-header').getBoundingClientRect().bottom;
+                  window.scrollBy(0, Math.ceil(anchor.bottom - header + 20));
+                }''')
                 page.wait_for_function('''() => {
                   const a=document.querySelector('.document-card .document-preview').getBoundingClientRect();
                   const header=document.querySelector('.app-header').getBoundingClientRect().bottom;

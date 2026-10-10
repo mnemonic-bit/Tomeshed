@@ -1,5 +1,13 @@
 # Tomeshed
 
+[![Validation](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/validation.yml/badge.svg?branch=main)](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/validation.yml)
+[![CodeQL](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/codeql.yml)
+[![Main publication](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/mnemonic-bit/Tomeshed/actions/workflows/main.yml)
+[![Latest release](https://img.shields.io/github/v/release/mnemonic-bit/Tomeshed)](https://github.com/mnemonic-bit/Tomeshed/releases)
+[![GHCR image](https://img.shields.io/github/v/release/mnemonic-bit/Tomeshed?label=GHCR)](https://github.com/mnemonic-bit/Tomeshed/pkgs/container/tomeshed)
+
+[GitHub Releases](https://github.com/mnemonic-bit/Tomeshed/releases) · [GHCR package](https://github.com/mnemonic-bit/Tomeshed/pkgs/container/tomeshed)
+
 Tomeshed is a local ebook and PDF library. Signed-in users can upload PDF, EPUB, and DoclingDocument JSON files, organize documents with shared tags and favorites, search extracted text, and read preserved sources. The reader saves each user's position, last-read time, and completion state. Docling extracts structured content for indexing. PDF conversion uses Docling's native text pipeline, which extracts embedded text but does not perform OCR.
 
 ## Run locally
@@ -22,20 +30,21 @@ Run `docker compose up --build` to serve Tomeshed on port 5000. Set `TOMESHED_PO
 
 For a manual Podman deployment, see [PODMAN.md](PODMAN.md).
 
+For a published image, select an immutable `v<VERSION>` tag, a full commit SHA tag, or a manifest digest from [GHCR](https://github.com/mnemonic-bit/Tomeshed/pkgs/container/tomeshed). Pull and replace with `scripts/podman_replace.sh IMAGE_REFERENCE EXPECTED_VERSION`; see [PODMAN.md](PODMAN.md) for version selection, health verification, inbox mounts, and rollback. Use a digest or full SHA tag when a release tag is unavailable.
+
 ## Verify
 
-Install `requirements-dev.txt`, then run:
+Install `requirements-dev.txt` and Playwright Chromium, then run the complete validation gate with one command:
 
 ```sh
-.venv/bin/python -m pytest -q
-.venv/bin/python tests/browser_check.py
-.venv/bin/python tests/browser_check_documents.py
-.venv/bin/python tests/browser_check_reader.py
-.venv/bin/python tests/browser_check_preview.py
-.venv/bin/python tests/browser_check_organization.py
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
+./tests/run-all.sh
 ```
 
-The browser checks use Playwright Chromium. Install its browser with `.venv/bin/python -m playwright install chromium` if Chromium is not cached. Feature 0002 screenshots and its report are written to `/tmp/tomeshed-feature-0002-browser`.
+The same `tests/run-all.sh` command runs every `tests/test_*.py` module, every `tests/browser_check*.py` script, verifies the locked container dependencies for amd64 and arm64, and builds and tests the shipping image with isolated test volumes. Browser screenshots and reports stay under `/tmp/`.
+
+Inspect a published manifest with `docker buildx imagetools inspect ghcr.io/mnemonic-bit/tomeshed:v<VERSION>`. Use `gh attestation verify oci://ghcr.io/mnemonic-bit/tomeshed@sha256:<DIGEST> --repo mnemonic-bit/Tomeshed` for the manifest and each platform digest printed by the `Main` workflow. Each platform also has an SPDX SBOM attestation. The version shown in the app comes from the root `VERSION` file and the release tag.
 
 ## Card previews
 

@@ -4,7 +4,7 @@
 
 Report vulnerabilities affecting the current Tomeshed version in the root `VERSION` file. Older versions and untagged development snapshots are not maintained. Security fixes are handled on a best-effort basis.
 
-GitHub Releases and published container images are planned in [Feature 0008](FEATURES/feature-0008-publish-through-github.md). Until a release exists, include the Git commit when reporting a deployment from source.
+Use the GitHub Release tag for a published version. Include the full Git commit when reporting a deployment from source or a full SHA image tag.
 
 ## Reporting a vulnerability
 

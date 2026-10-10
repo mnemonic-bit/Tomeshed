@@ -1,24 +1,25 @@
 # GitHub repository settings
 
-These settings live on GitHub and cannot be fully represented by repository files. Apply this checklist before making `mnemonic-bit/Tomeshed` public. This file does not configure GitHub Actions or publish a container image.
+These settings require the repository owner to change GitHub state. Use the public `mnemonic-bit/Tomeshed` repository and the linked `ghcr.io/mnemonic-bit/tomeshed` package. Keep the repository description and topics about an ebook and PDF library; do not use VDL's video description. Suggested topics are `ebooks`, `pdf`, `epub`, `flask`, `podman`, and `self-hosted`.
 
-## Presentation
+## Actions and merge rules
 
-1. Set the repository description to `A local ebook and PDF library for reading and organizing documents.`
-2. Add topics `ebooks`, `pdf`, `epub`, `flask`, `podman`, and `self-hosted`.
-3. Leave the homepage empty unless a maintained project site exists. The root `README.md` describes installation and use.
-4. If a social preview is added, use Tomeshed artwork without private documents or account data. Do not reuse VDL's video screenshot.
-5. Check that GitHub recognizes the root `LICENSE` as MIT and shows the license on the repository page.
+1. Allow GitHub-authored Actions and the verified Docker and Anchore Actions pinned in `.github/workflows/`. Set the default `GITHUB_TOKEN` permission to read repository contents and packages. Leave permission for Actions to create or approve pull requests disabled.
+2. Open a pull request containing the workflows. After its checks appear, create an **active** ruleset targeting `main`. Require a pull request, an up-to-date branch, and these exact check names from the first run: `Validation / Deterministic gate`, `CodeQL / Analyze (python)`, and `CodeQL / Analyze (javascript-typescript)`. Set zero required approvals and no bypass actor. If GitHub displays a different exact context, use the context shown by that run.
+3. Test the ruleset with a pull request whose validation check fails. Confirm GitHub blocks merge. Then merge a passing pull request. Use the checked-in CodeQL advanced setup only; disable CodeQL default setup.
 
-## Issue and security intake
+The `Main` workflow grants `packages: write`, `contents: write`, `attestations: write`, and `id-token: write` only to its publication job after validation. Pull request workflows have no publication credentials. Standard public repository runners are sufficient; no paid security product or runner is required.
 
-1. Enable Issues. Check that the bug and feature forms in `.github/ISSUE_TEMPLATE/` appear in the issue chooser and that blank issues are disabled for visitors.
-2. Enable private vulnerability reporting. Check that the issue chooser's private-report link opens the advisory form for `mnemonic-bit/Tomeshed`; public issues must not be the reporting path for vulnerabilities.
-3. Enable the dependency graph, Dependabot alerts, and Dependabot security updates. The checked-in `.github/dependabot.yml` requests monthly Docker and GitHub Actions updates. Review alerts before changing Python dependencies; the container lock belongs to Feature 0008.
-4. Check the public-repository secret-scanning and push-protection settings. Keep credentials, SQLite data, imported documents, and generated artifacts out of Git and issue attachments.
+## Security and dependency maintenance
 
-## Workflow boundary
+Enable the dependency graph, Dependabot alerts, Dependabot security updates, and private vulnerability reporting. Confirm public repository secret scanning and push protection are enabled. Monthly version update pull requests cover Actions and Docker. Update `requirements.txt` and `requirements-container.txt` together in a reviewed pull request; run `tests/container/check-lock.sh` on that change. Do not enable CodeQL default setup alongside `.github/workflows/codeql.yml`.
 
-Feature 0008 defines GitHub Actions validation, CodeQL, GHCR images, GitHub Releases, and the `main` ruleset. Add the settings and checks for those services when Feature 0008 is implemented. Do not require a check name before its workflow has run on a pull request.
+## First package publication
 
-Before publication, confirm that `README.md` still describes the current Tomeshed version and supported deployment commands. Repository metadata must use Tomeshed names and must not point to VDL packages or releases.
+The first passing `Main` run pushes `main` and a full SHA tag, then tests anonymous access before creating `v<VERSION>`, `latest`, the Git tag, and the GitHub Release. A new GHCR package may be private initially. If the anonymous check fails:
+
+1. Open **Packages > tomeshed > Package settings**. Set visibility to **Public** and confirm the package is connected to `mnemonic-bit/Tomeshed`.
+2. From a logged-out shell, pull `ghcr.io/mnemonic-bit/tomeshed:<full-commit-sha>`.
+3. Rerun the same `Main` workflow. Its release policy accepts the existing SHA tag only when its digest matches the rebuilt tested image. Do not repair a partial release by overwriting its version tag; investigate the named conflict.
+
+Retain full SHA and version tags for rollback. `main` and `latest` are movable. The workflows do not delete immutable tags. Verify the first release and public package links in `README.md` after publication.

@@ -6,6 +6,8 @@ updates:
           interval: monthly
           time: "06:00"
           timezone: Europe/Berlin
+      labels:
+          - dependencies
       open-pull-requests-limit: 5
 
     - package-ecosystem: docker
@@ -14,4 +16,6 @@ updates:
           interval: monthly
           time: "06:15"
           timezone: Europe/Berlin
+      labels:
+          - dependencies
       open-pull-requests-limit: 5

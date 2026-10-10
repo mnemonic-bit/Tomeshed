@@ -1,5 +1,19 @@
 # Podman deployment
 
+## Pull and replace a published image
+
+Select an immutable `v<VERSION>` tag, full 40-character commit SHA tag, or `@sha256:<manifest-digest>` from the [Tomeshed GHCR package](https://github.com/mnemonic-bit/Tomeshed/pkgs/container/tomeshed). Pass the image reference and the version expected from `/api/health` to the replacement script. The script pulls the image before it stops the current container, retains the previous container under a timestamped name, and checks `ok: true` and the expected version. A failed health check exits nonzero and leaves the previous container available for rollback.
+
+```bash
+tomeshed_version="$(tr -d '\n' < VERSION)"
+TOMESHED_PORT=5000 scripts/podman_replace.sh \
+    "ghcr.io/mnemonic-bit/tomeshed:v${tomeshed_version}" "$tomeshed_version"
+```
+
+Set `TOMESHED_INGEST_HOST_DIR=/absolute/path/to/inbox` for the optional read-only inbox mount. Keep the same `TOMESHED_PORT` and inbox path on every replacement. The script uses `tomeshed-data` for SQLite and `tomeshed-documents` for preserved source files and generated artifacts. Set `TOMESHED_CONTAINER_NAME`, `TOMESHED_DATA_VOLUME`, and `TOMESHED_DOCUMENTS_VOLUME` only when testing in an isolated Podman namespace or with isolated resource names. The script never removes these volumes.
+
+After replacement, check `curl -fsS http://127.0.0.1:${TOMESHED_PORT:-5000}/api/health` and compare its `version` with the chosen `EXPECTED_VERSION`. Run `podman ps --filter name='^tomeshed$'` to confirm the image and port. To roll back, use the commands in [Roll back a replacement](#roll-back-a-replacement) with the timestamped prior container name. A database migration or stored-file change can prevent an older image from reading the current volumes; restore a matching backup of both volumes when required.
+
 Run these commands from the Tomeshed repository root. They use Podman directly,
 so `podman compose` is not required. The container listens on all host
 interfaces on port 5000 by default. Set `TOMESHED_PORT` in the shell before
