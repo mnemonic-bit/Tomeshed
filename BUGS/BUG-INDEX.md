@@ -16,5 +16,12 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0010 — Sorting lacks useful fields and direction controls](bug-0010-sort-icon-and-direction.md) — Open.
 - [Bug 0011 — Clear Filters is a standalone text button](bug-0011-clear-filters-inside-filter-menu.md) — Open.
 - [Bug 0012 — Bookshelves are isolated above document results](bug-0012-bookshelves-in-main-results.md) — Open.
-- [Bug 0013 — Main result cards show text and controls outside thumbnails](bug-0013-thumbnail-only-main-grid.md) — Open.
+- [Bug 0013 — Main result cards contain secondary metadata and actions](bug-0013-thumbnail-only-main-grid.md) — Open.
 - [Bug 0014 — Library lacks VDL-style page size and pager controls](bug-0014-library-pagination-settings.md) — Open.
+- [Bug 0015 — Favorite icon background obscures light document covers](bug-0015-favorite-icon-opacity.md) — Open.
+- [Bug 0016 — Preview opens during incidental pointer movement](bug-0016-preview-opens-too-quickly.md) — Open.
+- [Bug 0017 — Document cards expose an unnecessary Preview button](bug-0017-remove-card-preview-button.md) — Open.
+- [Bug 0018 — Add to bookshelf is exposed as a separate card button](bug-0018-add-to-bookshelf-placement.md) — Open.
+- [Bug 0019 — Document captions show author and tags under the cover](bug-0019-document-title-only-caption.md) — Open.
+- [Bug 0020 — A single click opens the reader instead of selecting a document](bug-0020-single-selection-and-double-click-open.md) — Open.
+- [Bug 0021 — Document Info popover belongs in the reader's left panel](bug-0021-reader-document-side-panel.md) — Open.
