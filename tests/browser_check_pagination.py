@@ -76,6 +76,8 @@ def main():
                 page.wait_for_url(base + "/")
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.includes('of 6')")
                 assert page.locator("#documentGrid").locator("> *").count() == 10
+                assert page.locator("#catalogPager").is_visible()
+                assert page.locator("#pagerFirst").is_visible() and page.locator("#pagerLast").is_visible()
                 assert page.locator("#pagerFirst").is_disabled() and page.locator("#pagerPrev").is_disabled()
                 assert page.locator("#pagerNext").is_enabled() and page.locator("#pagerLast").is_enabled()
                 assert page.evaluate("async () => (await (await fetch('/api/documents?limit=50')).json()).items.length") == 50
@@ -98,12 +100,17 @@ def main():
                 page.locator("#settingsBack").click()
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.startsWith('Page 1 of 3')")
                 assert page.locator("#documentGrid").locator("> *").count() == 20
+                assert page.locator("#pagerFirst").is_hidden() and page.locator("#pagerLast").is_hidden()
+                assert page.locator("#pagerPrev").is_visible() and page.locator("#pagerNext").is_visible()
                 page.locator("#accountMenuButton").click()
                 page.locator("#settingsMenuItem").click()
                 page.locator("#prefPageSize").select_option("50")
                 page.locator("#settingsBack").click()
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.startsWith('Page 1 of 2')")
                 assert page.locator("#documentGrid").locator("> *").count() == 50
+                assert page.locator("#catalogPager").is_visible()
+                assert page.locator("#pagerFirst").is_hidden() and page.locator("#pagerLast").is_hidden()
+                assert page.locator("#pagerPrev").is_visible() and page.locator("#pagerNext").is_visible()
 
                 # Remove the only final-page item after choosing five items per page.
                 page.locator("#accountMenuButton").click()
@@ -126,6 +133,8 @@ def main():
                 page.locator("#librarySearch").fill("Book 1")
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.includes('11 results')")
                 assert page.locator("#pagerInfo").inner_text().startswith("Page 1")
+                assert page.locator("#pagerFirst").is_hidden() and page.locator("#pagerLast").is_hidden()
+                assert page.locator("#pagerPrev").is_visible() and page.locator("#pagerNext").is_visible()
                 page.locator("#librarySearch").fill("")
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.includes('55 results')")
                 page.locator("#pagerLast").click()
@@ -133,6 +142,12 @@ def main():
                 page.locator("#filtersToggle").click()
                 page.locator("#filterScope").select_option("bookshelves")
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent === 'Page 1 of 1 · 1 result'")
+                assert page.locator("#catalogPager").is_hidden()
+                page.locator("#librarySearch").fill("No matching bookshelves")
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '0 results'")
+                assert page.locator("#catalogPager").is_hidden()
+                page.locator("#librarySearch").fill("")
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '1 result'")
                 page.locator("#filterScope").select_option("all")
                 page.wait_for_function("document.querySelector('#pagerInfo').textContent.startsWith('Page 1 of 11')")
                 page.locator("#filtersToggle").click()

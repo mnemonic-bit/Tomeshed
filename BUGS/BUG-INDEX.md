@@ -26,3 +26,9 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0020 — A single click opens the reader instead of selecting a document](bug-0020-single-selection-and-double-click-open.md) — Resolved in `0.2.16`.
 - [Bug 0021 — Document Info popover belongs in the reader's left panel](bug-0021-reader-document-side-panel.md) — Resolved in `0.2.17`.
 - [Bug 0022 — Mobile header covers the import drawer close button](bug-0022-mobile-import-drawer-covered-by-header.md) — Resolved in `0.2.12`.
+- [Bug 0023 — Pagination controls appear on single and short result sets](bug-0023-pagination-controls-visibility.md) — Resolved in `0.2.20`.
+- [Bug 0024 — Favorite star shows a permanent circle and uses text glyphs](bug-0024-favorite-star-hover-and-shape.md) — Resolved in `0.2.21`.
+- [Bug 0025 — Preview height ignores the displayed page format](bug-0025-preview-height-ignores-page-format.md) — Resolved in `0.2.22`.
+- [Bug 0026 — Selecting a second document clears the first selection](bug-0026-multi-document-selection-and-actions.md) — Resolved in `0.3.0`.
+- [Bug 0027 — Double-click flashes selection and selected cards show an Open overlay](bug-0027-double-click-selection-flash-and-open-overlay.md) — Resolved in `0.3.1`.
+- [Bug 0028 — Bookshelf cards have no hover preview of their documents](bug-0028-bookshelf-hover-preview.md) — Resolved in `0.4.0`.

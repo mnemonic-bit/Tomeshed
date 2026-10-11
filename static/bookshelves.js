@@ -8,6 +8,19 @@
   let mode = null;
   let draft = null;
   let searchGeneration = 0;
+  const previewBubble = $('bookshelfPreviewBubble');
+  const previewGrid = $('bookshelfPreviewGrid');
+  const previewTitle = $('bookshelfPreviewTitle');
+  const previewClose = $('bookshelfPreviewClose');
+  let previewActive = null;
+  let previewHover = null;
+  let previewFocusTimer = null;
+  let previewRequest = null;
+  let previewGeneration = 0;
+  let previewPointerX = null;
+  let previewPointerY = null;
+  let lastTouch = 0;
+  const suppressPreviewFocus = new WeakSet();
 
   function node(tag, className, value) { const item = document.createElement(tag); if (className) item.className = className; if (value !== undefined) item.textContent = value; return item; }
   function button(label, action, className = '') { const item = node('button', className, label); item.type = 'button'; item.addEventListener('click', action); return item; }
@@ -25,10 +38,184 @@
   dialog.addEventListener('close', () => { active = null; mode = null; draft = null; });
 
   function cover(documentId) { const img = node('img', 'bookshelf-cover'); img.alt = ''; img.loading = 'lazy'; img.src = `/api/documents/${encodeURIComponent(documentId)}/thumbnail`; img.addEventListener('error', () => img.remove()); return img; }
+  function cancelPreviewHover() { clearTimeout(previewHover?.timer); previewHover = null; }
+  function cancelPreviewFocus() { clearTimeout(previewFocusTimer); previewFocusTimer = null; }
+  function visiblePreviewCard(state = previewActive) {
+    if (!state?.card.isConnected || !state.card.getClientRects().length) return false;
+    const rect = state.trigger.getBoundingClientRect();
+    const header = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+    const footer = $('versionFooter')?.getBoundingClientRect().top || innerHeight;
+    return rect.bottom > header && rect.top < footer && rect.right > 0 && rect.left < innerWidth;
+  }
+  function closePreview(returnFocus = false) {
+    cancelPreviewHover(); cancelPreviewFocus();
+    if (!previewActive) return;
+    const prior = previewActive;
+    previewActive = null; previewGeneration++;
+    previewRequest?.abort(); previewRequest = null;
+    previewBubble.hidden = true;
+    prior.trigger.setAttribute('aria-expanded', 'false');
+    if (returnFocus && prior.focusReturn && visiblePreviewCard(prior)) {
+      suppressPreviewFocus.add(prior.trigger);
+      prior.trigger.focus();
+    }
+  }
+  function inPreviewBridge(x, y) {
+    if (!previewActive) return false;
+    const anchor = previewActive.trigger.getBoundingClientRect();
+    const card = previewActive.card.getBoundingClientRect();
+    const bubble = previewBubble.getBoundingClientRect();
+    const inside = rect => x >= rect.left - 2 && x <= rect.right + 2 && y >= rect.top - 2 && y <= rect.bottom + 2;
+    if (inside(card) || inside(bubble)) return true;
+    const left = Math.min(anchor.right, bubble.right);
+    const right = Math.max(anchor.left, bubble.left);
+    return x >= left - 2 && x <= right + 2 &&
+      y >= Math.max(anchor.top, bubble.top) - 2 && y <= Math.min(anchor.bottom, bubble.bottom) + 2;
+  }
+  function placePreview() {
+    if (!previewActive || !visiblePreviewCard()) { closePreview(); return; }
+    const anchor = previewActive.trigger.getBoundingClientRect();
+    const header = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+    const footer = $('versionFooter')?.getBoundingClientRect().top || innerHeight;
+    const topBound = Math.max(12, header + 8);
+    const bottomBound = Math.min(innerHeight - 12, footer - 8);
+    const gap = 12;
+    const leftRoom = Math.max(0, anchor.left - 12 - gap);
+    const rightRoom = Math.max(0, innerWidth - anchor.right - 12 - gap);
+    const side = rightRoom >= 380 || rightRoom >= leftRoom ? 'right' : 'left';
+    const room = side === 'right' ? rightRoom : leftRoom;
+    const margin = Math.min(12, Math.floor(innerWidth / 4));
+    const maxWidth = Math.max(1, innerWidth - margin * 2);
+    const minimumWidth = Math.min(100, maxWidth);
+    const width = Math.min(maxWidth, Math.max(minimumWidth, Math.min(380, room)));
+    previewBubble.style.minWidth = `${minimumWidth}px`;
+    previewBubble.style.width = `${width}px`;
+    const availableHeight = Math.max(0, bottomBound - topBound);
+    previewBubble.style.maxHeight = `${availableHeight}px`;
+    previewBubble.style.height = `${availableHeight}px`;
+    const chromeHeight = previewBubble.getBoundingClientRect().height - previewGrid.clientHeight;
+    const height = Math.min(availableHeight, Math.max(100, Math.ceil(previewGrid.scrollHeight + chromeHeight)));
+    previewBubble.style.height = `${height}px`;
+    const beside = side === 'right' ? anchor.right + gap : anchor.left - gap - width;
+    previewBubble.style.left = `${Math.max(margin, Math.min(innerWidth - margin - width, beside))}px`;
+    previewBubble.style.top = `${Math.max(topBound, Math.min(bottomBound - height, anchor.top + anchor.height / 2 - height / 2))}px`;
+    previewBubble.dataset.side = side;
+    const box = previewBubble.getBoundingClientRect();
+    previewBubble.style.setProperty('--preview-pointer-y', `${Math.max(16, Math.min(box.height - 16, anchor.top + anchor.height / 2 - box.top))}px`);
+    if (previewActive.pointerInside && previewPointerX !== null && !inPreviewBridge(previewPointerX, previewPointerY) &&
+        !previewActive.card.contains(document.activeElement) && !previewBubble.contains(document.activeElement)) closePreview();
+  }
+  function previewTile(item) {
+    const tile = node('div', 'bookshelf-preview-tile');
+    tile.setAttribute('role', 'img'); tile.setAttribute('aria-label', item.title);
+    const art = node('div', 'bookshelf-preview-art');
+    const fallback = () => { art.replaceChildren(node('span', 'bookshelf-preview-fallback', item.source_type.toUpperCase())); };
+    if (item.thumbnail_available) {
+      const image = node('img'); image.alt = ''; image.loading = 'lazy';
+      image.addEventListener('error', fallback);
+      image.src = `/api/documents/${encodeURIComponent(item.id)}/thumbnail`;
+      art.append(image);
+    } else fallback();
+    tile.append(art, node('span', 'bookshelf-preview-name', item.title));
+    return tile;
+  }
+  async function openPreview(shelf, card, trigger, focusReturn = false, pointer = null) {
+    if (!focusReturn && Date.now() - lastTouch < 600) return;
+    if (previewActive?.id === shelf.id && previewActive.card === card) {
+      if (focusReturn) { previewActive.focusReturn = true; previewClose.focus(); }
+      return;
+    }
+    closePreview(); window.tomeshedPreview?.close();
+    if (pointer) { previewPointerX = pointer.clientX; previewPointerY = pointer.clientY; }
+    previewActive = {id: shelf.id, card, trigger, focusReturn, pointerInside: Boolean(pointer)};
+    const owner = previewActive;
+    const generation = ++previewGeneration;
+    previewBubble.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    previewTitle.textContent = shelf.name;
+    previewGrid.replaceChildren(node('p', 'bookshelf-preview-message', 'Loading bookshelf…'));
+    placePreview();
+    if (focusReturn) previewClose.focus();
+    previewRequest = new AbortController();
+    try {
+      const detail = await request(`/api/bookshelves/${encodeURIComponent(shelf.id)}`, {signal: previewRequest.signal});
+      if (generation !== previewGeneration || previewActive !== owner || !visiblePreviewCard(owner)) return;
+      previewTitle.textContent = `${detail.name} · ${detail.members.length} visible`;
+      previewGrid.replaceChildren(...(detail.members.length ? detail.members.map(previewTile) : [node('p', 'bookshelf-preview-message', 'No visible documents')]));
+      previewGrid.scrollTop = 0;
+      placePreview();
+    } catch (error) {
+      if (generation !== previewGeneration || previewActive !== owner || error.name === 'AbortError') return;
+      previewGrid.replaceChildren(node('p', 'bookshelf-preview-message', 'Bookshelf preview unavailable'));
+      placePreview();
+    }
+  }
+  function schedulePreviewHover(shelf, card, trigger, event) {
+    if (event.buttons || document.body.classList.contains('reader-open') || Date.now() - lastTouch < 600) { cancelPreviewHover(); return; }
+    if (previewActive?.id === shelf.id && previewActive.card === card) return;
+    if (previewHover?.id === shelf.id && previewHover.card === card) {
+      previewHover.x = event.clientX; previewHover.y = event.clientY; return;
+    }
+    cancelPreviewHover();
+    const pending = {id: shelf.id, card, trigger, x: event.clientX, y: event.clientY};
+    pending.timer = setTimeout(() => {
+      if (previewHover !== pending) return;
+      previewHover = null;
+      if (!visiblePreviewCard(pending) || document.body.classList.contains('reader-open')) return;
+      const box = trigger.getBoundingClientRect();
+      if (pending.x < box.left || pending.x > box.right || pending.y < box.top || pending.y > box.bottom) return;
+      openPreview(shelf, card, trigger, false, {clientX: pending.x, clientY: pending.y});
+    }, 800);
+    previewHover = pending;
+  }
+  function schedulePreviewFocus(shelf, card, trigger) {
+    cancelPreviewFocus();
+    if (suppressPreviewFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
+    previewFocusTimer = setTimeout(() => {
+      previewFocusTimer = null;
+      if (document.activeElement === trigger && visiblePreviewCard({card, trigger}) &&
+          !document.body.classList.contains('reader-open')) openPreview(shelf, card, trigger, true);
+    }, 800);
+  }
   function card(shelf) {
     const item = node('article', 'bookshelf-card'); item.dataset.bookshelfId = shelf.id; item.dataset.owned = String(shelf.owned);
-    const primary = button('', () => openDetail(shelf.id), 'bookshelf-card-open');
+    let suppressTouchClick = false;
+    const primary = button('', event => {
+      if (suppressTouchClick) { event.preventDefault(); suppressTouchClick = false; return; }
+      closePreview(); openDetail(shelf.id);
+    }, 'bookshelf-card-open');
     primary.setAttribute('aria-label', `Open bookshelf ${shelf.name}, ${shelf.count} visible ${shelf.count === 1 ? 'document' : 'documents'}`);
+    primary.setAttribute('aria-controls', 'bookshelfPreviewBubble'); primary.setAttribute('aria-expanded', 'false');
+    primary.addEventListener('pointerenter', event => {
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') schedulePreviewHover(shelf, item, primary, event);
+    });
+    primary.addEventListener('pointermove', event => {
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') schedulePreviewHover(shelf, item, primary, event);
+    });
+    primary.addEventListener('pointerleave', cancelPreviewHover);
+    primary.addEventListener('focus', () => schedulePreviewFocus(shelf, item, primary));
+    primary.addEventListener('blur', cancelPreviewFocus);
+    let holdTimer = null;
+    let holdStart = null;
+    const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; holdStart = null; };
+    primary.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch') return;
+      cancelHold(); suppressTouchClick = false;
+      holdStart = {x: event.clientX, y: event.clientY};
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (!item.isConnected || document.body.classList.contains('reader-open')) return;
+        suppressTouchClick = true;
+        openPreview(shelf, item, primary, true);
+      }, 800);
+    });
+    primary.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch' && holdStart &&
+          Math.hypot(event.clientX - holdStart.x, event.clientY - holdStart.y) > 12) cancelHold();
+    });
+    primary.addEventListener('pointerup', () => { cancelHold(); setTimeout(() => { suppressTouchClick = false; }, 500); });
+    primary.addEventListener('pointercancel', cancelHold);
+    primary.addEventListener('contextmenu', event => { if (holdStart || suppressTouchClick) event.preventDefault(); });
     const mosaic = node('span', `bookshelf-mosaic count-${Math.min(4, shelf.covers.length)}`);
     if (shelf.covers.length) shelf.covers.forEach(id => mosaic.append(cover(id)));
     else mosaic.append(node('span', 'bookshelf-empty-preview', 'No visible documents'));
@@ -71,6 +258,7 @@
     catch (error) { report(`Continue reading failed: ${error.message}`); await refresh(); }
   }
   async function openDetail(shelfId) {
+    closePreview();
     try {
       const shelf = await request(`/api/bookshelves/${encodeURIComponent(shelfId)}`);
       if (shelf.owned && !snapshot.owned.some(item => item.id === shelfId)) snapshot = await request('/api/bookshelves');
@@ -213,6 +401,36 @@
     reveal('Add to bookshelf', options);
   }
   $('createBookshelf').addEventListener('click', () => openEditor());
-  window.tomeshedBookshelves = {refresh, choose, card};
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return;
+    previewPointerX = event.clientX; previewPointerY = event.clientY;
+    if (!previewActive) return;
+    previewActive.pointerInside = inPreviewBridge(event.clientX, event.clientY);
+    if (!previewActive.pointerInside && !previewActive.card.contains(document.activeElement) &&
+        !previewBubble.contains(document.activeElement)) closePreview();
+  });
+  document.addEventListener('pointerdown', event => {
+    cancelPreviewHover(); cancelPreviewFocus();
+    if (event.pointerType === 'touch') lastTouch = Date.now();
+  }, true);
+  document.addEventListener('pointerleave', event => {
+    if (event.pointerType === 'touch') return;
+    cancelPreviewHover(); previewPointerX = null; previewPointerY = null;
+    if (previewActive && !previewActive.card.contains(document.activeElement) &&
+        !previewBubble.contains(document.activeElement)) closePreview();
+  });
+  document.addEventListener('focusin', event => {
+    if (previewActive && !previewActive.pointerInside && !previewActive.card.contains(event.target) &&
+        !previewBubble.contains(event.target)) closePreview();
+  });
+  document.addEventListener('keydown', event => {
+    if (previewActive && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePreview(true); }
+  }, true);
+  previewClose.addEventListener('click', () => closePreview(true));
+  window.addEventListener('resize', placePreview);
+  window.addEventListener('scroll', placePreview, true);
+  new MutationObserver(() => { if (previewActive && !previewActive.card.isConnected) closePreview(); })
+    .observe($('documentGrid'), {childList: true});
+  window.tomeshedBookshelves = {refresh, choose, card, closePreview};
   refresh();
 })();

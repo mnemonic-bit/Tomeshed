@@ -16,11 +16,14 @@ import stat
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode, unquote
 
 from flask import abort, g, jsonify, request, send_file
 from document_processing import detect_source
+from werkzeug.exceptions import HTTPException
 
 LOG = logging.getLogger(__name__)
 TEMP_SUFFIXES = ('.part', '.partial', '.tmp', '.crdownload', '.download')
@@ -324,6 +327,93 @@ class FileWorkflows:
             return send_file(source, as_attachment=True, download_name=source.name,
                              mimetype={'pdf':'application/pdf','epub':'application/epub+zip','docling':'application/json'}[row['source_type']])
 
+        @app.post('/api/documents/bulk/status')
+        def selected_document_status():
+            try:
+                ids = self.selected_ids()
+            except ValueError as exc:
+                return jsonify(error=str(exc)), 400
+            accessible = []
+            for document_id in ids:
+                with self.db() as conn:
+                    row = conn.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
+                if row and library.can_access_document(row, g.current_user['id']):
+                    accessible.append(document_id)
+            return jsonify(accessible_ids=accessible,
+                           unavailable_ids=[document_id for document_id in ids if document_id not in accessible])
+
+        @app.post('/api/documents/bulk/export/original')
+        def export_selected_originals():
+            try:
+                ids = self.selected_ids()
+            except ValueError as exc:
+                return jsonify(error=str(exc)), 400
+            included, failures = [], []
+            archive_file = SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+            with zipfile.ZipFile(archive_file, 'w', compression=zipfile.ZIP_STORED) as archive:
+                for document_id in ids:
+                    with self.db() as conn:
+                        row = conn.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
+                    if not row or not library.can_access_document(row, g.current_user['id']):
+                        failures.append({'id': document_id, 'reason': 'unavailable'})
+                        continue
+                    try:
+                        source = library.safe_path(row['source_path'])
+                        filename = row['original_filename'] if source.suffix == '.source' else source.name
+                        basename = re.sub(r'[\\/\x00-\x1f\x7f]', '_', filename)
+                        entry_name = f'{Path(basename).stem} ({document_id}){Path(basename).suffix}'
+                        archive.write(source, entry_name)
+                    except (HTTPException, OSError, ValueError):
+                        failures.append({'id': document_id, 'reason': 'source_unavailable'})
+                        continue
+                    included.append({'id': document_id, 'filename': entry_name})
+                archive.writestr('manifest.json', json.dumps({
+                    'requested_ids': ids, 'included': included, 'failures': failures}, indent=2))
+            archive_file.seek(0)
+            response = send_file(archive_file, as_attachment=True, download_name='tomeshed-originals.zip',
+                                 mimetype='application/zip')
+            response.headers['X-Tomeshed-Bulk-Included'] = str(len(included))
+            response.headers['X-Tomeshed-Bulk-Failure-Count'] = str(len(failures))
+            return response
+
+        @app.post('/api/documents/bulk/delete')
+        def delete_selected_documents():
+            try:
+                ids = self.selected_ids()
+            except ValueError as exc:
+                return jsonify(error=str(exc)), 400
+            data = request.get_json(silent=True) or {}
+            if type(data.get('confirm_count')) is not int or data['confirm_count'] != len(ids):
+                return jsonify(error='Confirm deletion with the selected document count'), 400
+            removed, failures = [], []
+            for document_id in ids:
+                with self.lock:
+                    with self.db() as conn:
+                        row = conn.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
+                        active = conn.execute("SELECT 1 FROM import_jobs WHERE document_id=? AND state IN ('pending','processing')", (document_id,)).fetchone()
+                    if not row or not library.can_access_document(row, g.current_user['id']):
+                        failures.append({'id': document_id, 'reason': 'unavailable'})
+                    elif not library.can_manage_document(row, g.current_user['id']):
+                        failures.append({'id': document_id, 'reason': 'not_manageable'})
+                    elif active:
+                        failures.append({'id': document_id, 'reason': 'active_import'})
+                    else:
+                        result, _ = self.remove_many([document_id])
+                        if document_id in result['removed']:
+                            removed.append(document_id)
+                        else:
+                            failures.append({'id': document_id, 'reason': 'cleanup_failed'})
+            remaining = []
+            for document_id in ids:
+                if document_id in removed:
+                    continue
+                with self.db() as conn:
+                    row = conn.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
+                if row and library.can_access_document(row, g.current_user['id']):
+                    remaining.append(document_id)
+            return jsonify(removed=removed, failures=failures,
+                           remaining_document_ids=remaining), 207 if failures else 200
+
         @app.get('/api/documents/<document_id>/export/docling')
         def export_docling(document_id):
             row = self.document(document_id)
@@ -416,6 +506,15 @@ class FileWorkflows:
         if row is None or not self.library.can_access_document(row, g.current_user['id']):
             abort(404)
         return row
+
+    def selected_ids(self):
+        data = request.get_json(silent=True)
+        ids = data.get('ids') if isinstance(data, dict) else None
+        if (not isinstance(ids, list) or not 0 < len(ids) <= 1000 or
+                any(not isinstance(document_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', document_id) for document_id in ids) or
+                len(set(ids)) != len(ids)):
+            raise ValueError('Provide 1 to 1000 distinct document IDs')
+        return ids
 
     def bulk_preview(self):
         with self.db() as conn:

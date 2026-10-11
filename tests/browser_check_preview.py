@@ -247,11 +247,9 @@ def main():
                 page.locator('#previewNext').click()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
                 checks['docling_slice'] = 'passed'
-                # A point in the enclosing rectangle, outside both the card and bubble, must close.
-                gap = page.evaluate('''() => {const b=document.querySelector('#previewBubble').getBoundingClientRect();
-                  const a=document.querySelector('.document-card [aria-expanded="true"]').closest('.document-card').querySelector('.document-preview').getBoundingClientRect();
-                  return {x:(a.right+b.left)/2,y:b.top+12};}''')
-                page.mouse.move(gap['x'], gap['y'])
+                # Moving beyond the card and bubble without preview focus must close it.
+                page.locator('#librarySearch').focus()
+                page.mouse.move(0, 0)
                 page.locator('#previewBubble').wait_for(state='hidden')
                 checks['pointer_leave'] = 'passed'
                 docling_saved = {'locator': {'element': '#/texts/1', 'offset': .1}, 'percent': 30}
@@ -364,7 +362,7 @@ def main():
                 assert phone.evaluate(f'''async () => await (await fetch('/api/documents/{epub_id}/progress')).json()''')['position'] == epub_saved
                 phone_cover.tap()
                 assert not phone.locator('#reader').is_visible(), 'Short tap opened the reader'
-                card(phone, 'Preview EPUB').locator('.document-selected-open').tap()
+                phone.locator('#openSelected').tap()
                 phone.locator('#reader').wait_for(state='visible')
                 assert not phone.locator('#previewBubble').is_visible(), 'Short tap left the preview open'
                 phone.locator('#readerClose').tap()

@@ -92,8 +92,9 @@ def main():
                 touch_card = touch_page.locator('.document-card').first
                 touch_card.locator('.document-open').tap()
                 assert touch_card.get_attribute('class').find('document-selected') >= 0
-                touch_card.locator('.document-selected-open').tap()
-                assert touch_page.locator('#reader').is_visible()
+                assert touch_card.locator('.document-copy button, .document-preview .document-open-action').count() == 0
+                touch_page.locator('#openSelected').tap()
+                touch_page.locator('#reader').wait_for(state='visible')
                 touch_context.close()
                 pdf = page.locator(".document-card").filter(has_text="Twelve Page")
                 pdf.locator(".document-open").dblclick()

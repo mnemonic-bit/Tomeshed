@@ -59,9 +59,14 @@
     const room = side === 'right' ? rightRoom : leftRoom;
     const width = Math.max(100, Math.min(495, room));
     bubble.style.width = `${width}px`;
-    const height = Math.max(100, Math.min(500, bottomBound - topBound));
+    const availableHeight = Math.max(0, bottomBound - topBound);
+    bubble.style.maxHeight = `${availableHeight}px`;
+    bubble.style.height = `${availableHeight}px`;
+    const chromeHeight = bubble.getBoundingClientRect().height - content.clientHeight;
+    const displayed = content.firstElementChild;
+    const contentHeight = displayed?.getBoundingClientRect().height || 0;
+    const height = Math.min(availableHeight, Math.max(100, Math.ceil(contentHeight + chromeHeight)));
     bubble.style.height = `${height}px`;
-    bubble.style.maxHeight = `${Math.max(100, bottomBound - topBound)}px`;
     bubble.style.left = `${side === 'right' ? anchor.right + gap : anchor.left - gap - width}px`;
     bubble.style.top = `${Math.max(topBound, Math.min(bottomBound - height, anchor.top + anchor.height / 2 - height / 2))}px`;
     bubble.dataset.side = side;
@@ -87,14 +92,20 @@
     content.replaceChildren();
     if (result.image) {
       const image = document.createElement('img');
-      image.alt = result.label; image.src = result.image;
+      image.alt = result.label;
       const owner = active;
+      image.addEventListener('load', () => { if (active === owner && active.index === result.index && image.isConnected) place(); });
       image.addEventListener('error', () => { if (active === owner && active.index === result.index && image.isConnected) showFailure(); });
+      image.src = result.image;
       content.append(image);
     } else {
       const excerpt = document.createElement('div'); excerpt.className = 'preview-excerpt';
       excerpt.innerHTML = result.html;
       excerpt.querySelectorAll('a').forEach(link => link.removeAttribute('href'));
+      const owner = active;
+      excerpt.querySelectorAll('img').forEach(image => image.addEventListener('load', () => {
+        if (active === owner && active.index === result.index && excerpt.isConnected) place();
+      }));
       content.append(excerpt);
     }
     position.textContent = `${result.label}${result.approximate ? ' · approximate restore' : ''}`;
@@ -125,6 +136,7 @@
     if (pointerEvent) { pointerX = pointerEvent.clientX; pointerY = pointerEvent.clientY; }
     if (active?.id === id && active.card === card) { if (focusReturn) { active.focusReturn = true; closeButton.focus(); } return; }
     close();
+    window.tomeshedBookshelves?.closePreview();
     active = {id, card, thumbnail, trigger, focusReturn, pointerInside: Boolean(pointerEvent), index: 0, total: 0};
     bubble.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');

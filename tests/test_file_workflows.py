@@ -8,6 +8,7 @@ import socket
 import sqlite3
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,94 @@ def test_bulk_stale_cleanup_retry_and_path_boundary(module, monkeypatch, tmp_pat
     title=client.get(f'/api/documents/{ids[1]}').json['title']
     failed=client.delete(f'/api/documents/{ids[1]}',json={'confirm':title})
     assert failed.status_code==500 and external.read_text()=='secret'
+
+
+def test_selected_bulk_originals_and_delete_report_each_result(module, monkeypatch):
+    monkeypatch.setattr(module.document_library, '_run_conversion', fake_result)
+    admin = signed_in(module)
+    source = pdf_bytes(1)
+    ids = []
+    for _ in range(2):
+        job = register(admin, 'Same.pdf', len(source)).json
+        transfer(admin, job['id'], source)
+        wait_job(admin, job['id'], 'ready')
+        ids.append(job['document_id'])
+
+    response = admin.post('/api/documents/bulk/export/original', json={'ids': ids})
+    assert response.status_code == 200
+    assert response.headers['X-Tomeshed-Bulk-Included'] == '2'
+    assert admin.post('/api/documents/bulk/export/original', json={'ids': ids * 2}).status_code == 400
+    assert admin.post('/api/documents/bulk/delete', json={'ids': [], 'confirm_count': 0}).status_code == 400
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        names = [item['filename'] for item in manifest['included']]
+        assert len(set(names)) == 2 and all(name.endswith('.pdf') for name in names)
+        assert manifest['failures'] == []
+        assert all(archive.read(name) == source for name in names)
+
+    missing_ids = [f'missing_{index:03d}' for index in range(200)]
+    response = admin.post('/api/documents/bulk/export/original', json={'ids': missing_ids})
+    assert response.status_code == 200
+    assert response.headers['X-Tomeshed-Bulk-Failure-Count'] == '200'
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['failures'] == [{'id': document_id, 'reason': 'unavailable'} for document_id in missing_ids]
+
+    with module.db() as conn:
+        missing_path = module.document_library.root / conn.execute(
+            'SELECT source_path FROM documents WHERE id=?', (ids[1],)).fetchone()[0]
+    missing_path.unlink()
+    response = admin.post('/api/documents/bulk/export/original', json={'ids': ids})
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert [item['id'] for item in manifest['included']] == ids[:1]
+        assert manifest['failures'] == [{'id': ids[1], 'reason': 'source_unavailable'}]
+
+    assert admin.post('/api/users', json={
+        'username': 'reader', 'name': 'Reader', 'password': 'reader-password', 'role': 'normal'}).status_code == 201
+    with module.db() as conn:
+        conn.execute("UPDATE documents SET visibility='private' WHERE id=?", (ids[1],))
+    reader = module.app.test_client()
+    assert reader.post('/login', data={'username': 'reader', 'password': 'reader-password'}).status_code == 302
+    status = reader.post('/api/documents/bulk/status', json={'ids': ids}).json
+    assert status == {'accessible_ids': ids[:1], 'unavailable_ids': ids[1:]}
+    response = reader.post('/api/documents/bulk/export/original', json={'ids': ids})
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert [item['id'] for item in manifest['included']] == ids[:1]
+        assert manifest['failures'] == [{'id': ids[1], 'reason': 'unavailable'}]
+    denied = reader.post('/api/documents/bulk/delete', json={'ids': ids, 'confirm_count': 2})
+    assert denied.status_code == 207
+    assert denied.json['removed'] == []
+    assert {item['id'] for item in denied.json['failures']} == set(ids)
+    assert denied.json['failures'] == [
+        {'id': ids[0], 'reason': 'not_manageable'}, {'id': ids[1], 'reason': 'unavailable'}]
+    assert denied.json['remaining_document_ids'] == ids[:1]
+    own_job = register(reader, 'Own.pdf', len(source)).json
+    transfer(reader, own_job['id'], source)
+    wait_job(reader, own_job['id'], 'ready')
+    own_id = own_job['document_id']
+    assert reader.post('/api/documents/bulk/delete', json={'ids': [own_id], 'confirm_count': 1}).json['removed'] == [own_id]
+    assert admin.post('/api/documents/bulk/delete', json={'ids': ids, 'confirm_count': 1}).status_code == 400
+    assert admin.post('/api/documents/bulk/delete', json={'ids': ids[:1], 'confirm_count': True}).status_code == 400
+
+    with module.db() as conn:
+        blocked_path = module.document_library.root / conn.execute(
+            'SELECT source_path FROM documents WHERE id=?', (ids[0],)).fetchone()[0]
+    real_unlink = Path.unlink
+    def block_first(path, *args, **kwargs):
+        if path == blocked_path:
+            raise OSError('injected cleanup failure')
+        return real_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'unlink', block_first)
+    result = admin.post('/api/documents/bulk/delete', json={'ids': ids, 'confirm_count': 2})
+    assert result.status_code == 207
+    assert result.json['removed'] == ids[1:]
+    assert result.json['remaining_document_ids'] == ids[:1]
+    assert result.json['failures'] == [{'id': ids[0], 'reason': 'cleanup_failed'}]
+    monkeypatch.setattr(Path, 'unlink', real_unlink)
+    assert admin.get(f'/api/documents/{ids[0]}').status_code == 200
+    assert admin.get(f'/api/documents/{ids[1]}').status_code == 404
 
 
 def test_url_validation_policy_pin_and_redaction(module, monkeypatch):

@@ -192,14 +192,39 @@ let availableTags = [];
 let pendingCatalogMutation = 0;
 let deferredCatalogRefresh = false;
 const catalogItems = new Map();
-let selectedDocumentId = null;
+const selectedDocumentIds = new Set();
+const selectedDocumentLabels = new Map();
+let selectionBusy = false;
+function updateSelectionActions() {
+  const count = selectedDocumentIds.size;
+  $('selectionCount').textContent = `${count} selected`;
+  const picker = $('openSelectedDocument');
+  const previous = picker.value;
+  const previousCount = picker.options.length - 1;
+  picker.replaceChildren();
+  const placeholder = element('option', '', count > 1 ? 'Choose a document' : 'Selected document');
+  placeholder.value = ''; picker.append(placeholder);
+  const nameCounts = new Map();
+  for (const id of selectedDocumentIds) {
+    const name = selectedDocumentLabels.get(id) || id;
+    nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+  }
+  for (const id of selectedDocumentIds) {
+    const name = selectedDocumentLabels.get(id) || id;
+    const option = element('option', '', nameCounts.get(name) > 1 ? `${name} (${id})` : name);
+    option.value = id; picker.append(option);
+  }
+  picker.value = count === 1 ? [...selectedDocumentIds][0] : previousCount > 1 && selectedDocumentIds.has(previous) ? previous : '';
+  picker.disabled = selectionBusy || !count;
+  $('openSelected').disabled = selectionBusy || !picker.value;
+  for (const id of ['clearSelection', 'downloadSelected', 'deleteSelected']) $(id).disabled = selectionBusy || !count;
+}
 function updateDocumentSelection(card) {
   const item = catalogItems.get(card.dataset.documentId);
   if (!item) return;
-  const selected = selectedDocumentId === item.id;
+  const selected = selectedDocumentIds.has(item.id);
   card.classList.toggle('document-selected', selected);
   card.querySelector('.document-open').setAttribute('aria-pressed', String(selected));
-  card.querySelector('.document-selected-open').hidden = !selected;
   card.querySelector('.document-selection-badge, .document-new-badge')?.remove();
   if (selected) {
     const badge = element('span', 'document-selection-badge', '✓');
@@ -208,14 +233,155 @@ function updateDocumentSelection(card) {
   } else if (item.reading_state === 'unread') card.append(element('span', 'document-new-badge', 'new'));
 }
 function selectDocument(id) {
-  const previous = selectedDocumentId;
-  selectedDocumentId = id === previous ? null : id;
-  for (const candidate of new Set([previous, selectedDocumentId])) {
-    if (!candidate) continue;
-    const card = $('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(candidate)}"]`);
+  if (selectedDocumentIds.has(id)) {
+    selectedDocumentIds.delete(id);
+    selectedDocumentLabels.delete(id);
+  } else {
+    if (selectedDocumentIds.size >= 1000) { showLibraryError('Select at most 1000 documents at a time.'); return; }
+    selectedDocumentIds.add(id);
+    selectedDocumentLabels.set(id, catalogItems.get(id)?.title || id);
+  }
+  const card = $('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(id)}"]`);
+  if (card) updateDocumentSelection(card);
+  updateSelectionActions();
+}
+function removeSelectedDocuments(ids) {
+  for (const id of ids) {
+    selectedDocumentIds.delete(id);
+    selectedDocumentLabels.delete(id);
+    const card = $('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(id)}"]`);
     if (card) updateDocumentSelection(card);
   }
+  updateSelectionActions();
 }
+async function syncSelectionAccess() {
+  if (!selectedDocumentIds.size) return;
+  try {
+    const status = await api('/api/documents/bulk/status', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: [...selectedDocumentIds]})});
+    removeSelectedDocuments(status.unavailable_ids);
+  } catch (error) { showLibraryError(`Could not check selected documents: ${error.message}`); }
+}
+function selectionFailureText(failures) {
+  return failures.map(item => `${selectedDocumentLabels.get(item.id) || item.id}: ${item.reason.replaceAll('_', ' ')}`).join('; ');
+}
+async function selectedArchiveManifest(blob) {
+  const decoder = new TextDecoder();
+  const number = (view, offset) => {
+    const value = Number(view.getBigUint64(offset, true));
+    if (!Number.isSafeInteger(value)) throw new Error('Selected archive is too large to inspect.');
+    return value;
+  };
+  const tailStart = Math.max(0, blob.size - 65557);
+  const tail = new DataView(await blob.slice(tailStart).arrayBuffer());
+  let end = -1;
+  for (let offset = tail.byteLength - 22; offset >= 0; offset--) {
+    if (tail.getUint32(offset, true) === 0x06054b50 && offset + 22 + tail.getUint16(offset + 20, true) === tail.byteLength) {
+      end = offset; break;
+    }
+  }
+  if (end < 0) throw new Error('Selected archive has no ZIP directory.');
+  let directorySize = tail.getUint32(end + 12, true);
+  let directoryOffset = tail.getUint32(end + 16, true);
+  if (directorySize === 0xffffffff || directoryOffset === 0xffffffff) {
+    if (end < 20 || tail.getUint32(end - 20, true) !== 0x07064b50) throw new Error('Selected archive has no ZIP64 directory.');
+    const zip64Offset = number(tail, end - 12);
+    const zip64 = new DataView(await blob.slice(zip64Offset, zip64Offset + 56).arrayBuffer());
+    if (zip64.byteLength < 56 || zip64.getUint32(0, true) !== 0x06064b50) throw new Error('Selected archive has an invalid ZIP64 directory.');
+    directorySize = number(zip64, 40);
+    directoryOffset = number(zip64, 48);
+  }
+  const directory = new DataView(await blob.slice(directoryOffset, directoryOffset + directorySize).arrayBuffer());
+  for (let offset = 0; offset + 46 <= directory.byteLength;) {
+    if (directory.getUint32(offset, true) !== 0x02014b50) throw new Error('Selected archive has an invalid ZIP entry.');
+    const nameLength = directory.getUint16(offset + 28, true);
+    const extraLength = directory.getUint16(offset + 30, true);
+    const commentLength = directory.getUint16(offset + 32, true);
+    const name = decoder.decode(new Uint8Array(directory.buffer, offset + 46, nameLength));
+    if (name === 'manifest.json') {
+      if (directory.getUint16(offset + 10, true) !== 0) throw new Error('Selected archive manifest is compressed.');
+      const size = directory.getUint32(offset + 20, true);
+      let localOffset = directory.getUint32(offset + 42, true);
+      if (size === 0xffffffff) throw new Error('Selected archive manifest is too large.');
+      if (localOffset === 0xffffffff) {
+        let extra = offset + 46 + nameLength;
+        const extraEnd = extra + extraLength;
+        while (extra + 4 <= extraEnd) {
+          const field = directory.getUint16(extra, true);
+          const length = directory.getUint16(extra + 2, true);
+          if (field === 0x0001) {
+            let value = extra + 4;
+            if (directory.getUint32(offset + 20, true) === 0xffffffff) value += 8;
+            if (directory.getUint32(offset + 24, true) === 0xffffffff) value += 8;
+            localOffset = number(directory, value);
+            break;
+          }
+          extra += 4 + length;
+        }
+      }
+      if (localOffset === 0xffffffff) throw new Error('Selected archive manifest has no location.');
+      const local = new DataView(await blob.slice(localOffset, localOffset + 30).arrayBuffer());
+      if (local.byteLength < 30 || local.getUint32(0, true) !== 0x04034b50) throw new Error('Selected archive manifest is invalid.');
+      const contentOffset = localOffset + 30 + local.getUint16(26, true) + local.getUint16(28, true);
+      return JSON.parse(await blob.slice(contentOffset, contentOffset + size).text());
+    }
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  throw new Error('Selected archive has no manifest.');
+}
+function selectionBusyState(busy) { selectionBusy = busy; updateSelectionActions(); }
+$('openSelectedDocument').addEventListener('change', updateSelectionActions);
+$('openSelected').addEventListener('click', async () => {
+  const id = $('openSelectedDocument').value;
+  if (!selectedDocumentIds.has(id)) return;
+  selectionBusyState(true);
+  try {
+    const documentItem = await api(`/api/documents/${encodeURIComponent(id)}`);
+    window.tomeshedPreview.close(); window.tomeshedReader.open(documentItem, $('openSelected'));
+  } catch (error) {
+    await syncSelectionAccess();
+    showLibraryError(`Could not open selected document: ${error.message}`);
+  } finally { selectionBusyState(false); }
+});
+$('clearSelection').addEventListener('click', () => removeSelectedDocuments([...selectedDocumentIds]));
+$('downloadSelected').addEventListener('click', async () => {
+  const ids = [...selectedDocumentIds];
+  if (!ids.length) return;
+  selectionBusyState(true);
+  try {
+    const response = await fetch('/api/documents/bulk/export/original', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids})});
+    if (!response.ok) { const error = await response.json(); throw new Error(error.error || `Request failed (${response.status})`); }
+    const blob = await response.blob();
+    const manifest = await selectedArchiveManifest(blob);
+    const failures = manifest.failures;
+    const failureCount = failures.length;
+    const included = manifest.included.length;
+    const url = URL.createObjectURL(blob);
+    const link = element('a'); link.href = url; link.download = 'tomeshed-originals.zip';
+    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const failureText = selectionFailureText(failures);
+    removeSelectedDocuments(failures.filter(item => item.reason === 'unavailable').map(item => item.id));
+    if (failureCount) showLibraryError(`${included} originals included; ${failureCount} unavailable. ${failureText}`);
+    else showLibraryNotice(`${included} originals included in tomeshed-originals.zip.`);
+  } catch (error) { showLibraryError(`Could not download selected documents: ${error.message}`); }
+  finally { selectionBusyState(false); }
+});
+$('deleteSelected').addEventListener('click', async () => {
+  const ids = [...selectedDocumentIds];
+  if (!ids.length || !confirm(`Delete ${ids.length} selected ${ids.length === 1 ? 'document' : 'documents'}?`)) return;
+  selectionBusyState(true);
+  try {
+    const result = await api('/api/documents/bulk/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ids, confirm_count: ids.length})});
+    const failureText = selectionFailureText(result.failures);
+    const remaining = new Set(result.remaining_document_ids);
+    removeSelectedDocuments(ids.filter(id => !remaining.has(id)));
+    await refreshLibrary();
+    if (result.failures.length) showLibraryError(`${result.removed.length} deleted; ${result.failures.length} failed. ${failureText}`);
+    else showLibraryNotice(`${result.removed.length} selected documents deleted.`);
+  } catch (error) { showLibraryError(`Could not delete selected documents: ${error.message}`); }
+  finally { selectionBusyState(false); }
+});
 function catalogParams(offset = 0, limit = catalogPageSize === 'endless' ? 50 : Number(catalogPageSize)) {
   const params = new URLSearchParams({
     q: $('librarySearch').value.trim(), offset: String(offset), limit: String(limit),
@@ -294,16 +460,26 @@ function renderDocument(document) {
   const open = element('button', 'document-open');
   open.type = 'button'; open.setAttribute('aria-label', `Select ${document.title}`);
   open.title = 'Double-click or press Enter to open';
+  let selectionTimer = null;
+  let activationPointerType = null;
+  const cancelPendingSelection = () => { clearTimeout(selectionTimer); selectionTimer = null; };
   const openReader = () => {
-    if (selectedDocumentId) selectDocument(selectedDocumentId);
+    cancelPendingSelection();
     window.tomeshedPreview.close(); window.tomeshedReader.open(document, open);
   };
   let suppressTouchClick = false;
+  open.addEventListener('pointerdown', event => { activationPointerType = event.pointerType; });
   open.addEventListener('click', event => {
     if (suppressTouchClick) { event.preventDefault(); suppressTouchClick = false; return; }
-    if (!window.document.body.classList.contains('reader-open')) selectDocument(document.id);
+    if (window.document.body.classList.contains('reader-open')) return;
+    if (event.detail > 1) { cancelPendingSelection(); return; }
+    if (event.detail === 0 || (event.pointerType || activationPointerType) === 'touch') {
+      cancelPendingSelection(); selectDocument(document.id); return;
+    }
+    cancelPendingSelection();
+    selectionTimer = setTimeout(() => { selectionTimer = null; selectDocument(document.id); }, 500);
   });
-  open.addEventListener('dblclick', event => { event.preventDefault(); openReader(); });
+  open.addEventListener('dblclick', event => { event.preventDefault(); cancelPendingSelection(); openReader(); });
   open.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); openReader(); } });
   const fallback = element('span', 'document-fallback', document.source_type.toUpperCase());
   open.append(fallback);
@@ -320,16 +496,17 @@ function renderDocument(document) {
     warning.title = 'Indexing warning';
     preview.append(warning);
   }
-  const selectedOpen = element('button', 'document-selected-open', 'Open');
-  selectedOpen.type = 'button'; selectedOpen.hidden = true;
-  selectedOpen.setAttribute('aria-label', `Open ${document.title}`);
-  selectedOpen.addEventListener('click', openReader);
-  preview.append(selectedOpen); card.append(preview);
+  card.append(preview);
   catalogItems.set(document.id, document);
   updateDocumentSelection(card);
-  const star = element('button', 'document-star', document.favorite ? '★' : '☆');
+  const star = element('button', 'document-star');
   star.type = 'button'; star.setAttribute('aria-label', document.favorite ? 'Remove from favorites' : 'Add to favorites');
   star.setAttribute('aria-pressed', String(Boolean(document.favorite)));
+  const starIcon = window.document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  starIcon.setAttribute('viewBox', '0 0 16 16'); starIcon.setAttribute('aria-hidden', 'true');
+  const starPath = window.document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  starPath.setAttribute('d', 'M8 1.6l1.85 3.76 4.15.6-3 2.93.71 4.13L8 11.07l-3.71 1.95L5 8.89 2 5.96l4.15-.6z');
+  starIcon.append(starPath); star.append(starIcon);
   star.addEventListener('click', () => documentMutation(document.id, 'favorite', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({favorite: !document.favorite})}));
   card.append(star);
   if (document.state === 'ready' || document.state === 'ready_with_warning') {
@@ -431,13 +608,13 @@ function renderDocumentInfo(document) {
   const removeButton = element('button', 'danger', 'Remove document'); removeButton.type = 'button';
   removeButton.addEventListener('click', async () => {
     if (!confirm(`Remove ${document.title}?`)) return;
-    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
+    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); removeSelectedDocuments([document.id]); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
     catch (error) { window.tomeshedReader.panelError(document.id, `Could not remove ${document.title}: ${error.message}`); }
   }); content.append(removeButton);
   return content;
 }
-function showLibraryError(message) { $('libraryError').textContent = message; $('libraryError').hidden = false; }
-function showLibraryNotice(message) { $('libraryNotice').textContent = message; $('libraryNotice').hidden = false; }
+function showLibraryError(message) { $('libraryNotice').hidden = true; $('libraryError').textContent = message; $('libraryError').hidden = false; }
+function showLibraryNotice(message) { $('libraryError').hidden = true; $('libraryNotice').textContent = message; $('libraryNotice').hidden = false; }
 function catalogKey(item) { return `${item.kind}:${item.id}`; }
 function cardKey(card) { return card.dataset.bookshelfId ? `bookshelf:${card.dataset.bookshelfId}` : `document:${card.dataset.documentId}`; }
 function renderCatalogItem(item) {
@@ -448,8 +625,9 @@ function renderCatalogItem(item) {
 function updateCatalogNavigation() {
   const endless = catalogPageSize === 'endless';
   const pages = Math.max(1, Math.ceil(catalogTotal / catalogEffectivePageSize));
-  $('catalogPager').hidden = endless || catalogTotal === 0;
+  $('catalogPager').hidden = endless || catalogTotal <= catalogEffectivePageSize;
   $('pagerInfo').textContent = `Page ${catalogPage + 1} of ${pages} · ${catalogTotal} ${catalogTotal === 1 ? 'result' : 'results'}`;
+  $('pagerFirst').hidden = $('pagerLast').hidden = pages < 4;
   $('pagerFirst').disabled = $('pagerPrev').disabled = catalogPage === 0;
   $('pagerNext').disabled = $('pagerLast').disabled = catalogPage >= pages - 1;
   $('catalogEndlessStatus').hidden = !endless || catalogTotal === 0;
@@ -513,7 +691,6 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
       const focusedClass = document.activeElement?.className;
       window.tomeshedPreview.close(); catalogItems.clear();
       $('documentGrid').replaceChildren(...items.map(renderCatalogItem));
-      if (selectedDocumentId && !$('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(selectedDocumentId)}"]`)) selectedDocumentId = null;
       if (focusedId && focusedClass) document.querySelector(`.document-card[data-document-id="${CSS.escape(focusedId)}"] .${String(focusedClass).split(' ')[0]}`)?.focus({preventScroll: true});
       catalogLoaded = endless ? items.length : offset + items.length;
     }
@@ -528,7 +705,7 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
       filtered ? 'Try another search.' : 'Add a PDF, EPUB, or DoclingDocument JSON file to start your library.';
     $('libraryError').hidden = true;
   } catch (error) { if (generation === catalogGeneration) showLibraryError(`Could not load library: ${error.message}`); }
-  finally { if (generation === catalogGeneration) { catalogLoading = false; updateCatalogNavigation(); requestAnimationFrame(loadVisibleEndless); } }
+  finally { if (generation === catalogGeneration) { catalogLoading = false; updateCatalogNavigation(); requestAnimationFrame(loadVisibleEndless); await syncSelectionAccess(); } }
 }
 async function loadImportJobs() {
   try {
