@@ -1,6 +1,6 @@
 # Bug 0039 — Document thumbnail titles exceed two lines
 
-**Status:** Open
+**Status:** Resolved in `0.4.11`
 
 ## Observed behavior
 
@@ -18,12 +18,12 @@ Show at most two lines of title text below each document thumbnail. Keep the cur
 
 ## Diagnosis
 
-`static/app.js` renders the document title in `.document-copy h3`. `static/styles.css` sets its font size and line height and allows wrapping, but does not limit the number of visible lines. No browser check was run to measure the current caption height.
+`static/app.js` renders the full document title in `.document-copy h3`. `static/styles.css` set its font size and line height and allowed wrapping, but did not limit the number of visible lines.
 
 ## Resolution
 
-Pending implementation.
+`static/styles.css` clamps `.document-copy h3` to two lines with an ellipsis. The rule keeps the existing font size and line height. The full title remains in the heading, the card's selection button name, and the reader's document details.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the caption. Verify with short, exactly two-line, and longer titles at representative library widths. Check that long titles occupy two lines with a visible ellipsis, the font size remains unchanged, and the full title remains available to assistive technology.
+**passed** — `./.venv/bin/python tests/browser_check_document_title_clamp.py` checked short, exactly two-line, and long titles at 1280, 390, and 320 px. The browser measured one, two, and two visible lines respectively; it also confirmed the unchanged `0.97rem` font size and `1.3` line height, the full accessible heading and selection button names, and the full title in the reader header and document panel. The 390 px Chromium screenshot at `/tmp/tomeshed-bug-0039-title-390.png` shows an ellipsis at the end of the second line.

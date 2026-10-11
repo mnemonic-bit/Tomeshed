@@ -251,18 +251,19 @@ def main():
                 page.locator("#filterTags input[value=History]").check()
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
                 assert ids(page) == ["book05"]
-                page.wait_for_function("document.querySelector('#activeFilters').textContent.includes('Tags (ALL): History')")
-                assert "Tags (ALL): History" in page.locator("#activeFilters").inner_text()
+                page.wait_for_function("document.querySelector('#filtersToggle').getAttribute('aria-label') === 'Filters active'")
+                assert page.locator("#filtersToggle").evaluate("button => button.classList.contains('has-active-filters')")
                 page.locator("#librarySearch").fill("no document has this exact phrase")
                 page.get_by_text("No matching documents").wait_for()
                 if page.locator("#catalogFilters").is_hidden(): page.locator("#filtersToggle").click()
                 page.locator("#clearFilters").click()
                 assert page.locator("#librarySearch").input_value() == "no document has this exact phrase"
-                assert page.locator("#activeFilters").inner_text() == "Search: no document has this exact phrase"
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
                 page.locator("#librarySearch").fill("")
                 load_all(page)
                 assert page.locator(".document-card").count() == 9
-                assert page.locator("#activeFilters").inner_text() == "No active filters"
+                assert page.locator("#activeFilters").count() == 0
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
                 checks["combined_filter_clear_empty"] = "passed"
                 # Favorite-first ordering, keyboard activation, and confirmed failure rollback.
                 set_sort(page, "favorite", "desc")
@@ -336,7 +337,7 @@ def main():
                 page.evaluate("""() => {const card = document.querySelector('.document-card[data-document-id="book06"]');
                     window.tomeshedPreview.open('book06', card, card.querySelector('.document-preview'), card.querySelector('.document-open'));} """)
                 page.locator("#previewBubble").wait_for(state="visible")
-                page.locator("#previewClose").click()
+                page.evaluate("window.tomeshedPreview.close()")
                 assert page.evaluate("async () => (await (await fetch('/api/documents/book06')).json()).reading_state") == state_before_preview
                 assert page.evaluate("async () => (await fetch('/api/documents/book06/source?download=1')).ok")
                 book6.locator(".document-open").dblclick()

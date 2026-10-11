@@ -1,6 +1,6 @@
 # Bug 0043 — Reader Remove Document uses an emoji trash can
 
-**Status:** Open
+**Status:** Resolved in `0.4.15`
 
 ## Observed behavior
 
@@ -23,8 +23,10 @@ Use the shape of VDL's `i-trash` SVG symbol for `Remove document` in both the ex
 
 ## Resolution
 
-Pending implementation.
+`static/app.js` now builds the VDL `i-trash` outline as an SVG for both `Remove document` controls. `static/styles.css` sizes the icon to 20 × 20 px within the existing 44 px controls and gives the controls a theme-aware hover background. The SVG uses `currentColor`, so the existing danger color applies in light and dark themes. The button's accessible name, confirmation, and deletion callback remain in place.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the icon. Verify the SVG shape in the expanded panel and compact rail in light and dark themes, including hover and keyboard focus. Confirm the accessible name and removal confirmation still work.
+**passed** — `.venv/bin/python tests/browser_check_reader_panel.py` exited with code 0. The browser check compares both SVG path sets with VDL's `i-trash`, checks the 20 px icon and 44 px compact control, and checks the danger color, hover background, and visible keyboard focus in light and dark themes in both panel states. It checks the `Remove document` accessible name, dismisses confirmation from each panel state without deleting the document, then accepts confirmation and verifies that a different document is removed.
+
+**passed** — `node --check static/app.js` and `git diff --check` exited with code 0.

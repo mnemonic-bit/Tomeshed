@@ -1,6 +1,6 @@
 # Bug 0042 — Bookshelf preview grows beyond two rows
 
-**Status:** Open
+**Status:** Resolved in `0.4.14`
 
 ## Observed behavior
 
@@ -26,8 +26,12 @@ The bookshelf preview bubble can become too tall when a shelf contains many docu
 
 ## Resolution
 
-Pending implementation.
+`placePreview()` measures the rendered first four tiles after setting the bubble width. It includes the second row's captions, the gap between rows, and grid padding in the visible height. The bubble uses the smaller of that height and the space between the header and footer. Shelves with fewer than four tiles use only their rendered rows; an empty shelf uses the empty message height. Every ordered tile remains in the scrollable grid.
+
+The grid now accepts keyboard focus, with a visible focus outline. Wheel, trackpad, touch, and keyboard input scroll the grid while the bubble remains anchored beside the bookshelf card. The title and Close control stay outside the scroll area.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the preview. Verify the bubble and grid heights with empty, one-row, two-row, and six-or-more-document shelves. For a long shelf, confirm that only two rows fit before scrolling, all later documents remain reachable in order with continuous scrolling, the title and close control stay reachable, and the bubble remains within the viewport at desktop and narrow sizes.
+**passed** — `.venv/bin/python tests/browser_check_bookshelf_preview.py` exited with code 0. It checks empty, one-member, two-member, four-member, and 12-member shelves. For the 12-member shelf it checks ordered tiles, a two-column grid, exactly two fully visible rows, a third row below the scroll area, and a bubble no taller than the four-member bubble. Wheel movement of 120 px stops within a row, a second fractional wheel movement scrolls farther, keyboard End and ArrowUp scroll the grid, and touch movement scrolls the mobile grid. The bubble stays open and anchored while scrolling; its title and Close control remain above the grid. A short viewport caps the bubble height, while 180 px and 160 px widths keep it within the viewport.
+
+**passed** — `.venv/bin/python tests/browser_check_bookshelves.py` reported 17 passed checks. `.venv/bin/python tests/browser_check_preview.py` reported 15 passed checks. `node --check static/bookshelves.js` and `git diff --check` exited with code 0.

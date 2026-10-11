@@ -1,6 +1,6 @@
 # Bug 0037 — Selection tick appears after the double-click window
 
-**Status:** Open
+**Status:** Resolved in `0.4.9`
 
 ## Observed behavior
 
@@ -21,12 +21,18 @@ If the effective double-click interval varies by browser or system settings, cho
 
 ## Diagnosis
 
-Not confirmed. `static/app.js` starts a fixed 500 ms selection timer for a mouse or pen `click` and cancels it on a second click or `dblclick`. The browser's effective double-click interval has not been measured for this report, so the reported gap and its duration remain to be reproduced.
+`static/app.js` waited 500 ms after a mouse or pen `click` before showing selection. The browser check had no shorter selection deadline, so its first-click selection remained invisible for the full 500 ms. Separate Playwright pointer clicks 105 ms apart generated two `click` events with `detail = 1` and no `dblclick`; Playwright supplies Chromium's click count through the browser automation protocol. That protocol cannot measure the operating system's native double-click interval. Page JavaScript also has no API for reading that interval, so the app cannot promise to match a browser or system setting that differs from its own rule.
 
 ## Resolution
 
-Pending investigation and fix.
+`static/app.js` now uses one 300 ms interval, measured from the first mouse or pen `click` to the second `pointerdown`, for both selection commitment and reader opening. A second pointer press within that interval pauses the selection timer while its `click` is resolved. A document-level release listener commits the first selection if the second press ends outside the thumbnail or is canceled. If the second click has `detail > 1`, the reader opens without changing selection. At or after the interval, the first click selects the document. A later browser `dblclick` does not open the reader; its second click is treated as a new single click. This app-defined interval gives the earliest reliable selection feedback under the app's double-click rule on every browser, although a system configured with a longer double-click interval may report a `dblclick` that the app treats as two single clicks. Keyboard and touch selection still apply immediately.
+
+`tests/browser_check_reader_close.py` and `tests/browser_check_preview.py` now send pointer double-clicks rather than dispatching a `dblclick` event without clicks. Their original reader and preview assertions remain in place.
 
 ## Verification
 
-**not_run** — The timing difference was reported by the user. No browser timing measurement or regression check was run for this documentation-only report. A fix should be checked by recording the first click, selection tick, second click, and `dblclick` event times across the recognition boundary, including single clicks, recognized double-clicks, mouse and pen input, and immediate keyboard and touch selection.
+**passed** — Before the fix, `.venv/bin/python tests/browser_check_double_click.py` timed out waiting for selection within 400 ms. After the fix, the same check passed. It records `pointerdown`, `click`, `dblclick`, and selection mutation times. A second mouse or pen press about 200 ms after the first click opens the reader with no selection mutation. A lone click shows the tick within 450 ms after the click. A browser `dblclick` sent after that tick leaves the reader closed. The check also confirms immediate touch selection and the existing keyboard behavior.
+
+**passed** — Independent review found that releasing a second press outside the thumbnail left selection pending. The added browser case failed before the release listener was added: its first click remained unselected after the second press moved off the thumbnail and released. It passed after the release listener was added.
+
+**passed** — `.venv/bin/python tests/browser_check_selection.py`, `.venv/bin/python tests/browser_check_preview.py`, and `.venv/bin/python tests/browser_check_reader_close.py` exited with code 0. `node --check static/app.js` exited with code 0.

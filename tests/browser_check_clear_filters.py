@@ -58,14 +58,16 @@ def main():
                 page.reload()
                 page.locator("#filterTags input[value=History]").wait_for(state="attached")
                 page.locator("#librarySearch").fill("Book")
-                page.wait_for_function("document.querySelector('#activeFilters').textContent === 'Search: Book'")
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '7 results'")
+                assert page.locator("#activeFilters").count() == 0
                 page.locator("#filtersToggle").click()
                 clear = page.locator("#clearFilters")
                 assert page.get_by_role("button", name="Clear filters", exact=True).count() == 1
                 assert clear.evaluate("button => button.closest('#catalogFilters') !== null")
                 assert clear.inner_text() == ""
                 assert clear.is_disabled()
-                assert not page.locator(".library-search").evaluate("el => el.classList.contains('has-active-filters')")
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
+                assert not page.locator("#filtersToggle").evaluate("button => button.classList.contains('has-active-filters')")
                 checks["placement_and_search_only"] = "passed"
 
                 page.locator("#sortToggle").click()
@@ -80,9 +82,9 @@ def main():
                 page.locator("#filterReading").select_option("unread")
                 page.locator("#filterTags input[value=History]").check()
                 page.locator("#filterTagMode").select_option("ANY")
-                page.wait_for_function("document.querySelector('#activeFilters').textContent.includes('Tags (ANY): History')")
+                page.wait_for_function("document.querySelector('#filtersToggle').getAttribute('aria-label') === 'Filters active'")
                 assert clear.is_enabled()
-                assert page.locator(".library-search").evaluate("el => el.classList.contains('has-active-filters')")
+                assert page.locator("#filtersToggle").evaluate("button => button.classList.contains('has-active-filters')")
                 clear.click()
                 page.wait_for_function("document.querySelector('#libraryCount').textContent === '7 results'")
                 assert page.locator("#librarySearch").input_value() == "Book"
@@ -96,8 +98,8 @@ def main():
                 assert page.locator(".document-card").evaluate_all("cards => cards.map(card => card.dataset.documentId)") == ["book00", "book01"]
                 assert page.locator("#catalogPager").is_visible()
                 assert page.locator("#pagerNext").is_enabled()
-                assert page.locator("#activeFilters").inner_text() == "Search: Book"
-                assert not page.locator(".library-search").evaluate("el => el.classList.contains('has-active-filters')")
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
+                assert not page.locator("#filtersToggle").evaluate("button => button.classList.contains('has-active-filters')")
                 assert clear.is_disabled()
                 assert page.locator("#catalogFilters").is_hidden()
                 assert page.locator("#filtersToggle").evaluate("button => document.activeElement === button")
@@ -105,10 +107,10 @@ def main():
                 page.locator("#filtersToggle").click()
                 page.locator("#filterTagMode").select_option("ANY")
                 assert clear.is_enabled()
-                assert "Tag matching: Any selected" in page.locator("#activeFilters").inner_text()
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
                 clear.click()
                 assert page.locator("#filterTagMode").input_value() == "ALL"
-                assert page.locator("#activeFilters").inner_text() == "Search: Book"
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
                 checks["tag_mode_only"] = "passed"
                 browser.close()
         finally:

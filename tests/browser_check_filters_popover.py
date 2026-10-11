@@ -86,8 +86,9 @@ def main():
                 page.get_by_role("button", name="Set password and open library").click()
                 page.wait_for_url(base + "/")
                 page.locator(".document-card").first.wait_for()
-                toggle = page.get_by_role("button", name="Filters", exact=True)
+                toggle = page.locator("#filtersToggle")
                 assert toggle.inner_text() == ""
+                assert page.get_by_role("button", name="Filters", exact=True).count() == 1
                 assert toggle.get_attribute("aria-controls") == "catalogFilters"
                 for width in (390, 1280):
                     page.set_viewport_size({"width": width, "height": 568 if width == 390 else 850})
@@ -129,9 +130,9 @@ def main():
                 page.locator("#librarySearch").fill("Book 2")
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 1")
                 assert page.locator(".document-card h3").inner_text() == "Book 2"
-                assert "Type: PDF" in page.locator("#activeFilters").inner_text()
-                assert page.locator(".library-search").evaluate("el => el.classList.contains('has-active-filters')")
-                assert page.locator("#activeFilters").evaluate("el => el.closest('.library-search') !== null")
+                assert page.get_by_role("button", name="Filters active", exact=True).count() == 1
+                assert toggle.evaluate("button => button.classList.contains('has-active-filters')")
+                assert page.locator("#activeFilters").count() == 0
                 page.keyboard.press("Escape")
                 toggle.click()
                 assert page.locator("#filterType").input_value() == "pdf"

@@ -12,6 +12,43 @@ from test_documents import pdf_bytes
 from test_reader import docling_fixture
 
 
+TRASH_PATHS = [
+    'M2.5 4h11',
+    'M6 4V2.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V4',
+    'M3.5 4l.7 9a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.7-9',
+    'M6.5 7v4',
+    'M9.5 7v4',
+]
+
+
+def check_trash_action(page, panel, section):
+    button = panel.locator(f'{section} .document-action.danger')
+    assert button.get_attribute('aria-label') == 'Remove document'
+    assert button.locator('.document-action-icon').inner_text() == ''
+    svg = button.locator('svg')
+    assert svg.get_attribute('viewBox') == '0 0 16 16'
+    assert svg.get_attribute('aria-hidden') == 'true'
+    assert [path.get_attribute('d') for path in svg.locator('path').all()] == TRASH_PATHS
+    assert svg.get_attribute('stroke') == 'currentColor'
+    assert svg.get_attribute('stroke-width') == '1.6'
+    assert svg.bounding_box()['width'] == 20
+    theme_colors = []
+    for theme in ('light', 'dark'):
+        page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
+        page.mouse.move(0, 0)
+        normal = button.evaluate('el => ({color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor, icon: getComputedStyle(el.querySelector("svg")).stroke})')
+        assert normal['color'] == normal['icon']
+        button.hover()
+        hover = button.evaluate('el => ({color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor})')
+        assert hover['color'] == normal['color'] and hover['background'] != normal['background']
+        button.focus()
+        page.keyboard.press('Tab')
+        page.keyboard.press('Shift+Tab')
+        assert button.evaluate('el => el.matches(":focus-visible") && getComputedStyle(el).outlineStyle !== "none"')
+        theme_colors.append(normal['color'])
+    assert theme_colors[0] != theme_colors[1]
+
+
 def open_document(page, document_id):
     page.locator(f'.document-card[data-document-id="{document_id}"] .document-open').dblclick()
     panel = page.locator('#readerDocumentPanel')
@@ -43,6 +80,12 @@ def main():
                 page.wait_for_url(base + '/')
                 page.locator(f'.document-card[data-document-id="{document_id}"]').wait_for()
                 panel = open_document(page, document_id)
+                check_trash_action(page, panel, '.reader-panel-details')
+                confirmation = []
+                page.once('dialog', lambda dialog: (confirmation.append(dialog.message), dialog.dismiss()))
+                panel.locator('.reader-panel-details').get_by_role('button', name='Remove document').click()
+                assert confirmation == ['Remove Panel PDF?']
+                assert panel.is_visible()
                 assert panel.get_by_text('Document info', exact=True).count() == 0
                 assert panel.locator('h3').count() == 0
                 assert page.locator('#readerTitle').inner_text() == 'Panel PDF'
@@ -92,6 +135,12 @@ def main():
                 assert panel.locator('.reader-panel-details').is_hidden()
                 assert panel.get_by_role('button', name='Add to bookshelf').is_visible()
                 assert panel.get_by_role('button', name='Remove document').is_visible()
+                check_trash_action(page, panel, '.reader-panel-rail')
+                confirmation = []
+                page.once('dialog', lambda dialog: (confirmation.append(dialog.message), dialog.dismiss()))
+                panel.locator('.reader-panel-rail').get_by_role('button', name='Remove document').click()
+                assert confirmation == ['Remove Panel PDF?']
+                assert panel.is_visible()
                 assert panel.get_by_role('button', name='Restore document info').is_visible()
                 rail_box = panel.bounding_box()
                 content_box = page.locator('#readerScroll').bounding_box()
@@ -189,6 +238,13 @@ def main():
                 assert 'is-minimized' in mobile.get_attribute('class')
                 mobile.get_by_role('button', name='Restore document info').tap()
                 assert 'is-minimized' not in mobile.get_attribute('class')
+                phone.locator('#readerClose').tap()
+                other_panel = open_document(page, other_id)
+                confirmation = []
+                page.once('dialog', lambda dialog: (confirmation.append(dialog.message), dialog.accept()))
+                other_panel.get_by_role('button', name='Remove document').filter(visible=True).click()
+                assert confirmation == ['Remove Other panel PDF?']
+                page.locator(f'.document-card[data-document-id="{other_id}"]').wait_for(state='detached')
                 browser.close()
             print('passed: reader document panel')
         finally:

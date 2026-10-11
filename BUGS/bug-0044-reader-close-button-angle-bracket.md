@@ -1,6 +1,6 @@
 # Bug 0044 — Reader Close button is a bordered text button
 
-**Status:** Open
+**Status:** Resolved in `0.4.16`
 
 ## Observed behavior
 
@@ -25,8 +25,12 @@ The full-document reader shows `Close` as a rectangular text button at the left 
 
 ## Resolution
 
-Pending implementation.
+`templates/index.html` now renders a left chevron SVG in `#readerClose` and gives the button the accessible name `Close reader`. `static/styles.css` gives the control a 44 × 44 pixel target, a transparent circular resting state, and immediate circular hover and keyboard-focus treatments. The reader close handler remains in `static/reader.js`.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the reader. Verify the resting, hover, and keyboard-focus appearances in light and dark themes at desktop and narrow widths. Check the accessible name, touch target, click and Escape dismissal, reader-position save, and focus return.
+**passed** — `.venv/bin/python tests/browser_check_reader_close.py` exited with code 0. It checked the accessible name, SVG, 44 × 44 pixel target, resting/hover/focus appearance, and title alignment in light and dark themes at 1000, 390, and 320 pixel widths. It also checked click and Escape dismissal, PDF page-position save and restore, library scroll restoration, and focus return to the document card.
+
+**passed** — `.venv/bin/python tests/browser_check_reader_header.py` exited with code 0. Reader header layout and controls remained functional at desktop and narrow widths.
+
+**passed** — `.venv/bin/python tests/browser_check_reader.py` exited with code 0. The broader reader check covered PDF, EPUB, and Docling reading and progress behavior.

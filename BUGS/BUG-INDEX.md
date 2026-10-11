@@ -39,12 +39,12 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0033 — Closing the reader shifts the library scroll position](bug-0033-reader-close-shifts-library-scroll.md) — Resolved in `0.4.5` (browser check baseline).
 - [Bug 0034 — Organization browser check uses removed reader actions](bug-0034-organization-browser-check-removed-reader-actions.md) — Resolved in `0.4.6`.
 - [Bug 0035 — Preview format check assumes the preview cursor resets](bug-0035-preview-format-check-assumes-cursor-reset.md) — Resolved in `0.4.7`.
-- [Bug 0036 — PDF preview appears to collapse between pages](bug-0036-pdf-preview-collapses-between-pages.md) — Open.
-- [Bug 0037 — Selection tick appears after the double-click window](bug-0037-selection-tick-lags-double-click-window.md) — Open.
-- [Bug 0038 — Document preview controls occupy too much space](bug-0038-document-preview-controls-and-spacing.md) — Open.
-- [Bug 0039 — Document thumbnail titles exceed two lines](bug-0039-document-thumbnail-title-exceeds-two-lines.md) — Open.
-- [Bug 0040 — Filter status text occupies the main header](bug-0040-filter-status-text-in-header.md) — Open.
-- [Bug 0041 — Header uses text Add Document and always shows Imports](bug-0041-add-document-and-imports-header-actions.md) — Open.
-- [Bug 0042 — Bookshelf preview grows beyond two rows](bug-0042-bookshelf-preview-exceeds-two-rows.md) — Open.
-- [Bug 0043 — Reader Remove Document uses an emoji trash can](bug-0043-reader-remove-document-trash-icon.md) — Open.
-- [Bug 0044 — Reader Close button is a bordered text button](bug-0044-reader-close-button-angle-bracket.md) — Open.
+- [Bug 0036 — PDF preview appears to collapse between pages](bug-0036-pdf-preview-collapses-between-pages.md) — Resolved in `0.4.8`.
+- [Bug 0037 — Selection tick appears after the double-click window](bug-0037-selection-tick-lags-double-click-window.md) — Resolved in `0.4.9`.
+- [Bug 0038 — Document preview controls occupy too much space](bug-0038-document-preview-controls-and-spacing.md) — Resolved in `0.4.10`.
+- [Bug 0039 — Document thumbnail titles exceed two lines](bug-0039-document-thumbnail-title-exceeds-two-lines.md) — Resolved in `0.4.11`.
+- [Bug 0040 — Filter status text occupies the main header](bug-0040-filter-status-text-in-header.md) — Resolved in `0.4.12`.
+- [Bug 0041 — Header uses text Add Document and always shows Imports](bug-0041-add-document-and-imports-header-actions.md) — Resolved in `0.4.13`.
+- [Bug 0042 — Bookshelf preview grows beyond two rows](bug-0042-bookshelf-preview-exceeds-two-rows.md) — Resolved in `0.4.14`.
+- [Bug 0043 — Reader Remove Document uses an emoji trash can](bug-0043-reader-remove-document-trash-icon.md) — Resolved in `0.4.15`.
+- [Bug 0044 — Reader Close button is a bordered text button](bug-0044-reader-close-button-angle-bracket.md) — Resolved in `0.4.16`.

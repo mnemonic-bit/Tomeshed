@@ -37,9 +37,9 @@ def wait_for_layout(page, expected_ratio=None):
       const available = Math.min(innerHeight - 12, footer.top - 8) - Math.max(12, header.bottom + 8);
       const bubbleHeight = bubble.getBoundingClientRect().height;
       const childHeight = child.getBoundingClientRect().height;
-      const target = childHeight + bubbleHeight - content.clientHeight;
+      const target = Math.max(childHeight, 72) + bubbleHeight - content.clientHeight;
       return target <= available + 2
-        ? Math.abs(content.clientHeight - childHeight) <= 3
+        ? Math.abs(content.clientHeight - Math.max(childHeight, 72)) <= 3
         : Math.abs(bubbleHeight - available) <= 3 && content.scrollHeight > content.clientHeight;
     }""", arg=expected_ratio)
 
@@ -73,20 +73,20 @@ def geometry(page):
         childHeight: child.getBoundingClientRect().height,
         childWidth: child.getBoundingClientRect().width,
         naturalWidth: child.naturalWidth || null, naturalHeight: child.naturalHeight || null,
-        controlsBottom: document.querySelector('.preview-controls').getBoundingClientRect().bottom};
+        positionBottom: document.querySelector('.preview-position-row').getBoundingClientRect().bottom};
     }""")
 
 
 def assert_sized_to_content(values):
     chrome = values['height'] - values['contentHeight']
-    target = values['childHeight'] + chrome
+    target = max(values['childHeight'], 72) + chrome
     if values['naturalWidth']:
         assert abs(values['childWidth'] / values['childHeight'] - values['naturalWidth'] / values['naturalHeight']) < .02, values
     assert values['top'] >= values['topBound'] - 1 and values['bottom'] <= values['bottomBound'] + 1, values
     assert values['left'] >= -1 and values['right'] <= values['viewportWidth'] + 1, values
-    assert values['controlsBottom'] <= values['bottom'] - 1, values
+    assert values['positionBottom'] <= values['bottom'] - 1, values
     if target <= values['available'] + 2:
-        assert abs(values['contentHeight'] - values['childHeight']) <= 3, values
+        assert abs(values['contentHeight'] - max(values['childHeight'], 72)) <= 3, values
     else:
         assert abs(values['height'] - values['available']) <= 3, values
         assert values['contentScrollHeight'] > values['contentHeight'], values

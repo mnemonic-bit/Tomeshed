@@ -1,6 +1,6 @@
 # Bug 0036 — PDF preview appears to collapse between pages
 
-**Status:** Open
+**Status:** Resolved in `0.4.8`
 
 ## Observed behavior
 
@@ -19,12 +19,14 @@ The preview bubble remains visible and retains a stable frame while the next PDF
 
 ## Diagnosis
 
-Not confirmed. `static/preview.js` changes the preview content to `Loading preview…` in `load()`, replaces that content with the next page image in `render()`, and calls `place()` before and after the image loads. `place()` calculates bubble height from the current content. These are the relevant code paths to inspect with a browser reproduction; source inspection alone does not show which transition produces the reported flicker.
+The focused Chromium reproduction changed from a 300 × 500 PDF page to a 600 × 500 page while delaying the second image response. `static/preview.js` replaced the current image with an unloaded image and called `place()`. The measured bubble heights were 613, 113, and 505 pixels: `place()` used the unloaded image's zero height and reduced the bubble to its minimum height before the image load event restored it. Clearing the current image at the start of `load()` also removed the visible page during the request.
 
 ## Resolution
 
-Pending investigation and fix.
+Keep the current PDF page and its location indicator visible while the next location and image load. Preload the next image, then replace the current page, update the cursor and controls, and measure the new page in one transition. Ignore image load and error events from requests superseded by navigation or closing the preview.
 
 ## Verification
 
-**not_run** — The symptom was reported by the user. No browser reproduction or regression check was run for this documentation-only report. Verify the fix by paging through a multi-page PDF while observing the bubble's visibility and dimensions before, during, and after each page load, including pages with different aspect ratios.
+**passed** — `.venv/bin/python tests/browser_check_preview_frame.py` failed before the fix with bubble heights `[613, 613, 113, 505]`. After the fix, the same check exited with code 0 and recorded `[613, 613, 505]` across pages with different dimensions. The bubble remained visible, the location advanced to page 2, and the reader stayed closed.
+
+**passed** — `.venv/bin/python tests/browser_check_preview.py` exited with code 0. Its existing checks cover PDF navigation, reader isolation, focus, stale responses, error handling, and placement.

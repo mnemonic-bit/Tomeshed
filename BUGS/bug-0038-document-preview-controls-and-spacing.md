@@ -1,6 +1,6 @@
 # Bug 0038 — Document preview controls occupy too much space
 
-**Status:** Open
+**Status:** Resolved in `0.4.10`
 
 ## Observed behavior
 
@@ -24,12 +24,12 @@ The document preview bubble shows a `Close preview` button in a top toolbar and 
 
 ## Diagnosis
 
-The current layout is defined by `templates/index.html`'s `.preview-toolbar`, `#previewContent`, and `.preview-controls`. `static/styles.css` displays the toolbar and controls as separate flex rows, and `static/preview.js` binds the close and navigation buttons. The pointer exit path already calls `close()` when the pointer and focus are outside the active card and bubble. Feature 0004 currently specifies a close button and requires touch dismissal; its preview requirements will need to reflect the approved replacement behavior when this report is resolved.
+The former layout put a toolbar above `#previewContent` and full-width navigation below it. Those rows increased the bubble height and made the top gutter larger than the side gutters. `static/preview.js` already kept the bubble open across the thumbnail-to-bubble gap and closed it after pointer and focus exit. Keyboard dismissal used Escape; touch dismissal depended on the removed close button.
 
 ## Resolution
 
-Pending implementation.
+`templates/index.html` now places circular navigation buttons in a stage over the displayed content and puts `#previewPosition` in a compact bottom row. `static/styles.css` gives each button a centered, invisible activation region with twice its visible diameter. Pointer type, hover, and focus reveal the controls, including on devices with both touch and mouse input. The document bubble has no top toolbar or close button. `static/preview.js` focuses a usable navigation control for keyboard and touch opening, closes on an outside touch tap, and restores thumbnail focus after that tap when the tap does not focus another control. The placement code sizes the bubble to narrow PDF pages, keeps the navigation regions inside the content stage for short excerpts, and retains the viewport limits and page aspect ratio. Feature 0004 now specifies these controls and dismissal paths.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the preview UI. Verify the layout and activation region with a browser check that moves the pointer from outside to just inside the two-diameter region, activates each overlaid button, and moves away again. Also check keyboard focus, touch navigation and dismissal, first and last locations, PDF and non-PDF location labels, and narrow viewports.
+**passed** — `./.venv/bin/python tests/browser_check_preview_controls.py` verifies the absent toolbar and close button, equal page gutters, twice-diameter activation regions, mouse and pen hiding on a hybrid device, touch reveal, pointer navigation, first and last PDF locations, EPUB location labels, short-excerpt region containment, and 390 px placement. `./.venv/bin/python tests/browser_check_preview.py` passed twice after the final touch-focus change, including pointer bridge, keyboard focus and Escape, touch navigation and outside-tap dismissal, viewport bounds, and saved-progress isolation. `./.venv/bin/python tests/browser_check_preview_format.py` passed PDF aspect and content-height checks across PDF, EPUB, Docling, and a narrow viewport. `./.venv/bin/python tests/browser_check_preview_frame.py` passed the PDF page-transition check. `./.venv/bin/python tests/browser_check_organization.py` passed its 15 categories after replacing the removed close-button action.

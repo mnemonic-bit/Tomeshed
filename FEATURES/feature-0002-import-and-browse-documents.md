@@ -32,7 +32,7 @@ Give a signed-in user a responsive library of PDF, EPUB, and DoclingDocument JSO
 - Generate or extract a cover or first-page thumbnail. Associate the generated artifact with the document ID.
 - If thumbnail generation fails, keep the valid document in the library and show artwork for its source type.
 - Reconcile `pending` and `processing` jobs after an application restart. Resume work when its stored source is available; otherwise mark the job `failed` with a reason.
-- Show `pending`, `processing`, and `failed` jobs in a header import drawer. Send import-state changes through Server-Sent Events (SSE). After the SSE connection returns, refresh job and catalog state through the normal API.
+- Show `pending`, `processing`, and `failed` jobs in the import drawer. Show its header Imports button and active-job count only while a job is `pending` or `processing`. Keep the drawer available through the Add document action so failed-job details and retry remain reachable after the last active job finishes. Send import-state changes through Server-Sent Events (SSE). After the SSE connection returns, refresh job and catalog state through the normal API.
 - Run conversion and image processing in a background job after the upload request returns. Reject uploads above the configured size limit with a clear error. Enforce configured conversion time and concurrency limits; record a time-limit failure in the affected import job without changing existing documents.
 
 ## Library view

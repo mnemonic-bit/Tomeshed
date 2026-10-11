@@ -20,6 +20,27 @@ def bounds(page):
     }""")
 
 
+def layout(page):
+    return page.locator('#bookshelfPreviewBubble').evaluate("""bubble => {
+      const grid = bubble.querySelector('#bookshelfPreviewGrid');
+      const gridBox = grid.getBoundingClientRect();
+      const tiles = [...grid.querySelectorAll('.bookshelf-preview-tile')];
+      return {
+        bubbleHeight: bubble.getBoundingClientRect().height,
+        gridHeight: grid.clientHeight,
+        scrollHeight: grid.scrollHeight,
+        scrollTop: grid.scrollTop,
+        tileBounds: tiles.map(tile => {
+          const box = tile.getBoundingClientRect();
+          return {top: box.top - gridBox.top + grid.scrollTop,
+            bottom: box.bottom - gridBox.top + grid.scrollTop};
+        }),
+        titleVisible: bubble.querySelector('#bookshelfPreviewTitle').getBoundingClientRect().bottom <= gridBox.top,
+        closeVisible: bubble.querySelector('#bookshelfPreviewClose').getBoundingClientRect().bottom <= gridBox.top
+      };
+    }""")
+
+
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         folder = Path(temporary)
@@ -28,7 +49,7 @@ def main():
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page(viewport={'width': 1000, 'height': 700})
+                page = browser.new_page(viewport={'width': 1000, 'height': 1100})
                 base = f'http://127.0.0.1:{port}'
                 page.goto(base + '/login')
                 page.locator('#password').fill('bookshelf-preview-password')
@@ -44,6 +65,9 @@ def main():
                 assert page.locator('#bookshelfPreviewBubble').is_hidden()
                 page.locator('#bookshelfPreviewBubble').wait_for(state='visible', timeout=2500)
                 assert page.locator('#bookshelfPreviewGrid').inner_text() == 'No visible documents'
+                empty_layout = layout(page)
+                assert empty_layout['scrollHeight'] <= empty_layout['gridHeight'] + 1
+                assert empty_layout['titleVisible'] and empty_layout['closeVisible']
                 page.locator('#bookshelfPreviewClose').click()
                 assert page.locator('#bookshelfPreviewBubble').is_hidden()
 
@@ -64,6 +88,10 @@ def main():
                 shelf_id = shelf.json()['id']
                 single = page.request.post(base + '/api/bookshelves', data={'name': 'Single shelf', 'members': ids[:1]})
                 assert single.status == 201
+                pair = page.request.post(base + '/api/bookshelves', data={'name': 'Pair shelf', 'members': ids[:2]})
+                assert pair.status == 201
+                four = page.request.post(base + '/api/bookshelves', data={'name': 'Four shelf', 'members': ids[:4]})
+                assert four.status == 201
                 detail = page.request.get(base + f'/api/bookshelves/{shelf_id}').json()
                 assert [item['id'] for item in detail['members']] == ids
                 page.reload()
@@ -74,7 +102,26 @@ def main():
                 page.locator('.bookshelf-card-open').hover()
                 page.wait_for_function("document.querySelectorAll('#bookshelfPreviewGrid .bookshelf-preview-tile').length === 1")
                 assert page.locator('#bookshelfPreviewGrid .bookshelf-preview-tile').get_attribute('aria-label') == 'Preview book 00'
+                single_layout = layout(page)
+                assert single_layout['scrollHeight'] <= single_layout['gridHeight'] + 1
+                assert single_layout['titleVisible'] and single_layout['closeVisible']
+                assert empty_layout['bubbleHeight'] < single_layout['bubbleHeight']
                 page.locator('#bookshelfPreviewClose').click()
+                for name, count in (('Pair shelf', 2), ('Four shelf', 4)):
+                    page.locator('#librarySearch').fill(name)
+                    page.evaluate('() => { clearTimeout(searchTimer); return loadCatalog(); }')
+                    page.wait_for_function("name => document.querySelector('.bookshelf-card h3')?.textContent === name", arg=name)
+                    page.mouse.move(0, 0)
+                    page.locator('.bookshelf-card-open').hover()
+                    page.wait_for_function("count => document.querySelectorAll('#bookshelfPreviewGrid .bookshelf-preview-tile').length === count", arg=count)
+                    measured = layout(page)
+                    assert measured['scrollHeight'] <= measured['gridHeight'] + 1, measured
+                    assert measured['titleVisible'] and measured['closeVisible']
+                    if count == 2:
+                        assert abs(measured['bubbleHeight'] - single_layout['bubbleHeight']) < 3
+                    else:
+                        assert measured['bubbleHeight'] > single_layout['bubbleHeight']
+                    page.locator('#bookshelfPreviewClose').click()
                 page.locator('#librarySearch').fill('Long shelf')
                 page.evaluate('() => { clearTimeout(searchTimer); return loadCatalog(); }')
                 page.wait_for_function("document.querySelectorAll('.bookshelf-card').length === 1 && document.querySelector('.bookshelf-card h3')?.textContent === 'Long shelf'")
@@ -89,15 +136,20 @@ def main():
                 assert tiles.evaluate_all('(items) => items.map(item => item.getAttribute("aria-label"))') == [f'Preview book {i:02d}' for i in range(12)]
                 assert page.locator('#bookshelfPreviewGrid .bookshelf-preview-fallback').count() == 6
                 assert page.locator('#bookshelfPreviewGrid button, #bookshelfPreviewGrid a').count() == 0
-                layout = page.locator('#bookshelfPreviewGrid').evaluate("""grid => ({
+                grid_style = page.locator('#bookshelfPreviewGrid').evaluate("""grid => ({
                   columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
                   scroll: grid.scrollHeight > grid.clientHeight,
                   ratio: grid.querySelector('.bookshelf-preview-art').getBoundingClientRect().width /
                     grid.querySelector('.bookshelf-preview-art').getBoundingClientRect().height,
                   fit: getComputedStyle(grid.querySelector('img')).objectFit
                 })""")
-                assert layout['columns'] == 2 and layout['scroll']
-                assert abs(layout['ratio'] - 2 / 3) < 0.03 and layout['fit'] == 'contain'
+                assert grid_style['columns'] == 2 and grid_style['scroll']
+                assert abs(grid_style['ratio'] - 2 / 3) < 0.03 and grid_style['fit'] == 'contain'
+                long_layout = layout(page)
+                assert long_layout['bubbleHeight'] <= measured['bubbleHeight'] + 3, long_layout
+                assert max(tile['bottom'] for tile in long_layout['tileBounds'][:4]) <= long_layout['gridHeight'] + 2, long_layout
+                assert long_layout['tileBounds'][4]['top'] >= long_layout['gridHeight'] - 2, long_layout
+                assert long_layout['titleVisible'] and long_layout['closeVisible']
                 box = bounds(page)
                 assert 0 <= box['left'] < box['right'] <= box['width']
                 assert 0 <= box['top'] < box['bottom'] <= box['height']
@@ -110,8 +162,22 @@ def main():
                 page.mouse.move(end_x, y, steps=5)
                 page.mouse.move(bubble['x'] + bubble['width'] / 2, bubble['y'] + bubble['height'] / 2)
                 assert page.locator('#bookshelfPreviewBubble').is_visible()
-                page.locator('#bookshelfPreviewGrid').evaluate('grid => grid.scrollTop = grid.scrollHeight')
+                page.mouse.wheel(0, 120)
+                page.wait_for_function("document.querySelector('#bookshelfPreviewGrid').scrollTop > 0")
+                wheel_position = layout(page)['scrollTop']
+                assert wheel_position < long_layout['tileBounds'][2]['top']
+                page.mouse.wheel(0, 31.5)
+                page.wait_for_function("position => document.querySelector('#bookshelfPreviewGrid').scrollTop > position", arg=wheel_position)
+                assert abs(layout(page)['bubbleHeight'] - long_layout['bubbleHeight']) < 3
+                page.locator('#bookshelfPreviewGrid').focus()
+                assert page.locator('#bookshelfPreviewGrid').evaluate('grid => document.activeElement === grid')
+                page.keyboard.press('End')
+                page.wait_for_function("document.querySelector('#bookshelfPreviewGrid').scrollTop + document.querySelector('#bookshelfPreviewGrid').clientHeight >= document.querySelector('#bookshelfPreviewGrid').scrollHeight - 2")
+                page.keyboard.press('ArrowUp')
+                page.wait_for_function("document.querySelector('#bookshelfPreviewGrid').scrollTop + document.querySelector('#bookshelfPreviewGrid').clientHeight < document.querySelector('#bookshelfPreviewGrid').scrollHeight - 2")
                 assert page.locator('#bookshelfPreviewBubble').is_visible()
+                assert layout(page)['titleVisible'] and layout(page)['closeVisible']
+                page.locator('#bookshelfPreviewGrid').evaluate('grid => grid.scrollTop = grid.scrollHeight')
                 tiles.last.click()
                 assert page.locator('#reader').is_hidden()
                 assert page.locator('.document-selection-badge').count() == 0
@@ -137,6 +203,22 @@ def main():
                 page.keyboard.press('Escape')
                 assert card.locator('.bookshelf-card-open').evaluate('button => document.activeElement === button')
                 page.locator('#librarySearch').focus()
+
+                page.set_viewport_size({'width': 1000, 'height': 450})
+                page.mouse.move(0, 0)
+                card.locator('.bookshelf-card-open').hover()
+                page.locator('#bookshelfPreviewBubble').wait_for(state='visible', timeout=2500)
+                short = bounds(page)
+                short_layout = layout(page)
+                assert short['top'] >= 0 and short['bottom'] <= short['height'], short
+                assert short_layout['bubbleHeight'] < long_layout['bubbleHeight']
+                assert short_layout['scrollHeight'] > short_layout['gridHeight']
+                assert short_layout['titleVisible'] and short_layout['closeVisible']
+                page.locator('#bookshelfPreviewGrid').focus()
+                page.keyboard.press('End')
+                page.wait_for_function("document.querySelector('#bookshelfPreviewGrid').scrollTop > 0")
+                assert page.locator('#bookshelfPreviewClose').is_visible()
+                page.locator('#bookshelfPreviewClose').click()
 
                 for viewport_width in (180, 160):
                     page.set_viewport_size({'width': viewport_width, 'height': 1200})
@@ -179,6 +261,16 @@ def main():
                 mobile = bounds(phone)
                 assert 0 <= mobile['left'] < mobile['right'] <= mobile['width']
                 assert 0 <= mobile['top'] < mobile['bottom'] <= mobile['height']
+                phone_grid = phone.locator('#bookshelfPreviewGrid').bounding_box()
+                touch_x = phone_grid['x'] + phone_grid['width'] / 2
+                touch_y = phone_grid['y'] + phone_grid['height'] * .7
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': touch_x, 'y': touch_y}]})
+                for step in range(1, 5):
+                    cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': [{'x': touch_x, 'y': touch_y - step * 30}]})
+                    phone.wait_for_timeout(30)
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+                phone.wait_for_function("document.querySelector('#bookshelfPreviewGrid').scrollTop > 0")
+                assert phone.locator('#bookshelfPreviewBubble').is_visible()
                 phone.locator('#bookshelfPreviewClose').tap()
                 assert phone.locator('#bookshelfPreviewBubble').is_hidden()
                 cover.tap()

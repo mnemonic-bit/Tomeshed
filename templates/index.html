@@ -14,14 +14,13 @@
     <div class="library-search">
       <div class="library-search-controls">
         <label for="librarySearch"><span class="visually-hidden">Search library</span><input id="librarySearch" type="search" placeholder="Search documents or bookshelves" autocomplete="off"></label>
-        <button id="filtersToggle" class="search-action" type="button" aria-label="Filters" aria-controls="catalogFilters" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10m-7 6h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="filter-active-mark" aria-hidden="true"></span></button>
+        <button id="filtersToggle" class="search-action" type="button" aria-label="Filters" aria-controls="catalogFilters" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10m-7 6h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
         <button id="sortToggle" class="search-action" type="button" aria-label="Sort: Date added, Descending" aria-controls="catalogSort" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h15M4 12h10M4 17h5m10-3v6m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <div id="catalogSort" class="catalog-sort" hidden>
         <label for="sortField">Sort by</label><select id="sortField"><option value="date_added">Date added</option><option value="title">Title</option><option value="author">Author</option><option value="type">Type</option><option value="favorite">Favorite</option></select>
         <label for="sortDirection">Direction</label><select id="sortDirection"><option value="asc">Ascending</option><option value="desc" selected>Descending</option></select>
       </div>
-      <p id="activeFilters" class="active-filters" role="status">No active filters</p>
       <div id="catalogFilters" class="catalog-filters" hidden>
         <div class="filter-panel-actions"><button id="clearFilters" type="button" aria-label="Clear filters" title="Clear filters" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h13l-5 7v5l-3 2v-7L3 5Zm13 10 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
         <label>Show <select id="filterScope"><option value="all">All</option><option value="documents">Documents only</option><option value="bookshelves">Only bookshelves</option></select></label>
@@ -33,7 +32,7 @@
         <label>Tag matching <select id="filterTagMode"><option value="ALL">All selected</option><option value="ANY">Any selected</option></select></label>
       </div>
     </div>
-    <div class="header-actions"><button id="chooseFile" class="upload-label" type="button">Add document</button><input id="uploadFile" type="file" accept=".pdf,.epub,.json,application/pdf,application/epub+zip,application/json" multiple hidden><button id="importsButton" type="button" aria-controls="importsDrawer" aria-expanded="false">Imports <span id="activeImportCount"></span></button></div>
+    <div class="header-actions"><button id="chooseFile" class="add-document-button" type="button" aria-label="Add document" aria-controls="importsDrawer" aria-expanded="false">+</button><input id="uploadFile" type="file" accept=".pdf,.epub,.json,application/pdf,application/epub+zip,application/json" multiple hidden><button id="importsButton" type="button" aria-controls="importsDrawer" aria-expanded="false" hidden>Imports <span id="activeImportCount"></span></button></div>
     <div class="account-menu-wrap">
       <button id="accountMenuButton" class="account-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="current-username">{{ user.name }}</span><span aria-hidden="true">⌄</span></button>
       <div id="accountMenu" class="account-menu" role="menu" hidden>
@@ -117,7 +116,7 @@
   <dialog id="bookshelfDialog" class="bookshelf-dialog" aria-labelledby="bookshelfDialogTitle"><div class="bookshelf-dialog-head"><h2 id="bookshelfDialogTitle">Bookshelf</h2><button id="closeBookshelfDialog" type="button" aria-label="Close bookshelf">×</button></div><p id="bookshelfStatus" role="status"></p><div id="bookshelfDialogBody"></div></dialog>
   <section id="reader" class="reader" role="dialog" aria-modal="true" aria-labelledby="readerTitle" hidden>
     <header class="reader-toolbar">
-      <div class="reader-heading"><button id="readerClose" type="button">Close</button><h2 id="readerTitle"></h2></div>
+      <div class="reader-heading"><button id="readerClose" type="button" aria-label="Close reader"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><h2 id="readerTitle"></h2></div>
       <span id="readerPosition" role="status">Opening…</span>
       <div class="reader-controls" aria-label="Reader navigation and zoom">
         <button id="readerPrevious" class="reader-nav" type="button" aria-label="Previous page or section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
@@ -142,17 +141,20 @@
       </div>
     </div>
   </section>
-  <aside id="previewBubble" class="preview-bubble" role="region" aria-label="Document preview" hidden>
-    <div class="preview-toolbar"><span id="previewPosition" role="status">Loading preview…</span><button id="previewClose" type="button" aria-label="Close preview">×</button></div>
-    <div id="previewContent" class="preview-content"></div>
-    <div class="preview-controls"><button id="previewPrevious" type="button" aria-label="Previous preview location">Previous</button><button id="previewNext" type="button" aria-label="Next preview location">Next</button></div>
+  <aside id="previewBubble" class="preview-bubble document-preview-bubble" role="region" aria-label="Document preview" tabindex="-1" hidden>
+    <div class="preview-stage">
+      <div id="previewContent" class="preview-content"></div>
+      <div class="preview-nav-hit preview-nav-previous"><button id="previewPrevious" type="button" aria-label="Previous preview location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button></div>
+      <div class="preview-nav-hit preview-nav-next"><button id="previewNext" type="button" aria-label="Next preview location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button></div>
+    </div>
+    <div class="preview-position-row"><span id="previewPosition" role="status">Loading preview…</span></div>
   </aside>
   <aside id="bookshelfPreviewBubble" class="preview-bubble bookshelf-preview-bubble" role="region" aria-label="Bookshelf preview" hidden>
     <div class="preview-toolbar"><span id="bookshelfPreviewTitle" role="status">Loading bookshelf…</span><button id="bookshelfPreviewClose" type="button" aria-label="Close bookshelf preview">×</button></div>
     <div id="bookshelfPreviewGrid" class="bookshelf-preview-grid"></div>
   </aside>
   <div id="fileDropTarget" class="file-drop-target" role="status" hidden><strong>Drop documents to import</strong><span>PDF, EPUB, or DoclingDocument JSON</span></div>
-  <aside id="importsDrawer" class="imports-drawer" aria-label="Import jobs" hidden><div class="drawer-heading"><h2>Imports</h2><button id="closeImports" type="button" aria-label="Close imports">×</button></div><form id="urlImportForm" class="url-import-form"><label for="importUrl">Direct PDF or EPUB URL</label><input id="importUrl" type="url" placeholder="https://example.com/book.pdf" required><button type="submit">Import URL</button></form><p id="importError" class="message error" role="alert" hidden></p><div id="importJobList" class="job-list"></div></aside>
+  <aside id="importsDrawer" class="imports-drawer" aria-label="Import jobs" hidden><div class="drawer-heading"><h2>Imports</h2><button id="closeImports" type="button" aria-label="Close imports">×</button></div><button id="chooseLocalFile" type="button">Choose local files</button><form id="urlImportForm" class="url-import-form"><label for="importUrl">Direct PDF or EPUB URL</label><input id="importUrl" type="url" placeholder="https://example.com/book.pdf" required><button type="submit">Import URL</button></form><p id="importError" class="message error" role="alert" hidden></p><div id="importJobList" class="job-list"></div></aside>
   <footer id="versionFooter" class="version-footer" data-ui-version="{{ version }}">
     <span id="libraryCount">0 items</span><span aria-hidden="true"> · </span>
     <span id="connectionStatus" role="status">Checking connection…</span><span aria-hidden="true"> · </span><span>UI v{{ version }}</span><span aria-hidden="true"> · </span><span id="apiVersion">API checking…</span><span aria-hidden="true"> · </span><span id="apiUptime">Uptime checking…</span>

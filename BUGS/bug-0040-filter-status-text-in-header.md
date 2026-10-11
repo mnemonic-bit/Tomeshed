@@ -1,6 +1,6 @@
 # Bug 0040 — Filter status text occupies the main header
 
-**Status:** Open
+**Status:** Resolved in `0.4.12`
 
 ## Observed behavior
 
@@ -21,12 +21,16 @@ The main page header displays `No active filters` below the search controls when
 
 ## Diagnosis
 
-`templates/index.html` renders `#activeFilters` with the initial `No active filters` text. `static/app.js` updates that text in `catalogFiltersLabel()` and applies `.has-active-filters` when catalog filters are set. `static/styles.css` uses that class to reveal a 7 px dot on the Filters button. Feature 0005 currently requires active filters to be displayed; its requirement will need to reflect the button cue when this report is resolved.
+`templates/index.html` rendered `#activeFilters` with the initial `No active filters` text. `static/app.js` updated that text in `catalogFiltersLabel()` and applied `.has-active-filters` when catalog filters were set. `static/styles.css` used that class to reveal a 7 px dot on the Filters button. Feature 0005 required active filters to be displayed in the header.
 
 ## Resolution
 
-Pending implementation.
+Removed `#activeFilters` and the dot. `updateFilterButtonState()` gives the Filters button a filled green appearance and the accessible name `Filters active` when a catalog filter is set. Search and sort do not activate the button. A tag matching mode without selected tags leaves the button in its default state; `Clear filters` remains available to reset that mode. Updated Feature 0005 to require the button cue and retained filter values in the popover.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the header. Verify the absence of the status line and the Filters button's active appearance with no filters, each filter type, multiple filters, search only, sort only, and after `Clear filters`. Check the active state in supported themes and through the accessibility tree.
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_filter_button_state.py` exited with code 0. The check first failed on the original `#activeFilters` element, then passed after the fix. It checked the absent status line, each catalog filter, multiple filters, search only, sort only, clear, selected values after reopening the popover, the button's accessible name, and computed button styles in light and dark themes. Light and dark screenshots are in `/tmp/tomeshed-bug-0040-browser/`.
+
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_clear_filters.py`, `tests/browser_check_filters_popover.py`, `tests/browser_check_organization.py`, and `tests/browser_check_bookshelves.py` each exited with code 0 after their status-line expectations were updated to the button state. The checks cover filter clearing, popover placement and focus, combined filters, and bookshelf scope.
+
+**passed** — `node --check static/app.js` and `git diff --check` exited with code 0.

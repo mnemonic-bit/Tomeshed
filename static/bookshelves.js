@@ -10,6 +10,8 @@
   let searchGeneration = 0;
   const previewBubble = $('bookshelfPreviewBubble');
   const previewGrid = $('bookshelfPreviewGrid');
+  previewGrid.tabIndex = 0;
+  previewGrid.setAttribute('aria-label', 'Bookshelf documents');
   const previewTitle = $('bookshelfPreviewTitle');
   const previewClose = $('bookshelfPreviewClose');
   let previewActive = null;
@@ -94,7 +96,15 @@
     previewBubble.style.maxHeight = `${availableHeight}px`;
     previewBubble.style.height = `${availableHeight}px`;
     const chromeHeight = previewBubble.getBoundingClientRect().height - previewGrid.clientHeight;
-    const height = Math.min(availableHeight, Math.max(100, Math.ceil(previewGrid.scrollHeight + chromeHeight)));
+    const tiles = [...previewGrid.querySelectorAll('.bookshelf-preview-tile')].slice(0, 4);
+    const visibleContent = tiles.length ? tiles : [...previewGrid.children];
+    const gridBox = previewGrid.getBoundingClientRect();
+    const gridHeight = visibleContent.length
+      ? Math.max(...visibleContent.map(item => item.getBoundingClientRect().bottom - gridBox.top + previewGrid.scrollTop +
+        (parseFloat(getComputedStyle(item).marginBottom) || 0))) +
+        (parseFloat(getComputedStyle(previewGrid).paddingBottom) || 0)
+      : previewGrid.scrollHeight;
+    const height = Math.min(availableHeight, Math.max(100, Math.ceil(gridHeight + chromeHeight)));
     previewBubble.style.height = `${height}px`;
     const beside = side === 'right' ? anchor.right + gap : anchor.left - gap - width;
     previewBubble.style.left = `${Math.max(margin, Math.min(innerWidth - margin - width, beside))}px`;

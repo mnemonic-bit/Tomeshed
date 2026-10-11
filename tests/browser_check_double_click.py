@@ -38,6 +38,40 @@ def assert_no_visual_change(page):
     assert states and all(state == states[0] for state in states), states
 
 
+def pen_click(button, detail):
+    button.evaluate("""(button, detail) => {
+      button.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerType: 'pen'}));
+      button.dispatchEvent(new PointerEvent('click', {bubbles: true, pointerType: 'pen', detail}));
+      if (detail === 2) button.dispatchEvent(new MouseEvent('dblclick', {bubbles: true, detail: 2}));
+    }""", detail)
+
+
+def observe_click_boundary(page, button):
+    button.evaluate("""button => {
+      window.clickBoundaryEvents = [];
+      const id = button.closest('.document-card').dataset.documentId;
+      for (const type of ['pointerdown', 'click', 'dblclick']) {
+        document.addEventListener(type, event => {
+          if (event.target.closest('.document-card')?.dataset.documentId !== id) return;
+          window.clickBoundaryEvents.push({
+            type, detail: event.detail, pointerType: event.pointerType,
+            at: performance.now()
+          });
+        });
+      }
+      new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+          const card = mutation.target;
+          if (!card.matches?.('.document-card') || card.dataset.documentId !== id) continue;
+          window.clickBoundaryEvents.push({
+            type: 'selection', selected: card.classList.contains('document-selected'),
+            at: performance.now()
+          });
+        }
+      }).observe(document.body, {subtree: true, attributes: true, attributeFilter: ['class']});
+    }""")
+
+
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         folder = Path(temporary)
@@ -55,10 +89,93 @@ def main():
                 page.get_by_role('button', name='Set password and open library').click()
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
                 first, second = card(page, 'First PDF'), card(page, 'Second PDF')
+                button = first.locator('.document-open')
                 assert page.locator('.document-selected-open').count() == 0
                 assert first.locator('.document-copy').locator('h3').count() == 1
                 assert first.locator('.document-copy').locator('button, a, p').count() == 0
                 assert page.locator('#openSelected').is_disabled()
+
+                observe_click_boundary(page, button)
+                bounds = button.bounding_box()
+                point = (bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2)
+                page.mouse.click(*point, click_count=1)
+                page.wait_for_timeout(200)
+                page.mouse.move(*point)
+                page.mouse.down(click_count=2)
+                page.mouse.up(click_count=2)
+                page.locator('#reader').wait_for(state='visible')
+                inside = page.evaluate('clickBoundaryEvents')
+                assert not any(event['type'] == 'selection' for event in inside), inside
+                assert [event['detail'] for event in inside if event['type'] == 'click'] == [1, 2], inside
+                inside_down = [event for event in inside if event['type'] == 'pointerdown']
+                inside_first = next(event for event in inside if event['type'] == 'click')
+                assert 180 <= inside_down[1]['at'] - inside_first['at'] < 300, inside
+                page.locator('#readerClose').click()
+
+                page.evaluate('clickBoundaryEvents = []')
+                page.mouse.click(*point, click_count=1)
+                page.wait_for_function("document.querySelector('#selectionCount').textContent === '1 selected'", timeout=450)
+                outside_before = page.evaluate('clickBoundaryEvents')
+                first_click = next(event for event in outside_before if event['type'] == 'click')
+                tick = next(event for event in outside_before if event['type'] == 'selection' and event['selected'])
+                assert 250 <= tick['at'] - first_click['at'] <= 450, outside_before
+                page.mouse.move(*point)
+                page.mouse.down(click_count=2)
+                page.mouse.up(click_count=2)
+                outside = page.evaluate('clickBoundaryEvents')
+                assert any(event['type'] == 'dblclick' for event in outside), outside
+                assert page.locator('#reader').is_hidden(), outside
+                page.wait_for_timeout(350)
+                assert page.locator('#reader').is_hidden(), page.evaluate('clickBoundaryEvents')
+                if page.locator('#clearSelection').is_enabled():
+                    page.locator('#clearSelection').click()
+
+                page.evaluate('clickBoundaryEvents = []')
+                page.mouse.click(*point, click_count=1)
+                page.wait_for_timeout(200)
+                page.mouse.move(*point)
+                page.mouse.down(click_count=2)
+                page.mouse.move(0, 0)
+                page.mouse.up(click_count=2)
+                page.wait_for_function("document.querySelector('#selectionCount').textContent === '1 selected'", timeout=450)
+                assert page.locator('#reader').is_hidden()
+                page.locator('#clearSelection').click()
+
+                page.evaluate('clickBoundaryEvents = []')
+                pen_click(button, 1)
+                page.wait_for_timeout(200)
+                pen_click(button, 2)
+                page.locator('#reader').wait_for(state='visible')
+                pen_inside = page.evaluate('clickBoundaryEvents')
+                assert not any(event['type'] == 'selection' for event in pen_inside), pen_inside
+                pen_down = [event for event in pen_inside if event['type'] == 'pointerdown']
+                pen_first = next(event for event in pen_inside if event['type'] == 'click')
+                assert 180 <= pen_down[1]['at'] - pen_first['at'] < 300, pen_inside
+                page.locator('#readerClose').click()
+
+                page.evaluate('clickBoundaryEvents = []')
+                pen_click(button, 1)
+                page.wait_for_function("document.querySelector('#selectionCount').textContent === '1 selected'", timeout=450)
+                pen_outside_before = page.evaluate('clickBoundaryEvents')
+                pen_first = next(event for event in pen_outside_before if event['type'] == 'click')
+                pen_tick = next(event for event in pen_outside_before if event['type'] == 'selection' and event['selected'])
+                assert 250 <= pen_tick['at'] - pen_first['at'] <= 450, pen_outside_before
+                pen_click(button, 2)
+                pen_outside = page.evaluate('clickBoundaryEvents')
+                assert any(event['type'] == 'dblclick' for event in pen_outside), pen_outside
+                assert page.locator('#reader').is_hidden(), pen_outside
+                page.wait_for_timeout(350)
+                assert page.locator('#reader').is_hidden(), page.evaluate('clickBoundaryEvents')
+                if page.locator('#clearSelection').is_enabled():
+                    page.locator('#clearSelection').click()
+
+                button.evaluate("""button => {
+                  button.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerType: 'touch'}));
+                  button.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerType: 'touch'}));
+                  button.dispatchEvent(new PointerEvent('click', {bubbles: true, pointerType: 'touch', detail: 1}));
+                }""")
+                assert page.locator('#selectionCount').inner_text() == '1 selected'
+                page.locator('#clearSelection').click()
 
                 observe_selection(page)
                 first.locator('.document-open').dblclick(delay=100)

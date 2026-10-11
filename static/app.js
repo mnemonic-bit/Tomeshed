@@ -396,24 +396,14 @@ function catalogParams(offset = 0, limit = catalogPageSize === 'endless' ? 50 : 
 }
 function hasActiveCatalogFilters() {
   return Boolean($('filterScope').value !== 'all' || $('filterType').value || $('filterAuthor').value.trim() ||
-    $('filterFavorite').value || $('filterReading').value || $('filterTagMode').value !== 'ALL' ||
+    $('filterFavorite').value || $('filterReading').value ||
     document.querySelector('#filterTags input:checked'));
 }
-function catalogFiltersLabel() {
-  const labels = [];
-  const q = $('librarySearch').value.trim(); if (q) labels.push(`Search: ${q}`);
-  if ($('filterScope').value !== 'all') labels.push($('filterScope').selectedOptions[0].textContent);
-  if ($('filterType').value) labels.push(`Type: ${$('filterType').value.toUpperCase()}`);
-  if ($('filterAuthor').value.trim()) labels.push(`Author: ${$('filterAuthor').value.trim()}`);
-  if ($('filterFavorite').value) labels.push(`Favorite: ${$('filterFavorite').value === 'true' ? 'yes' : 'no'}`);
-  if ($('filterReading').value) labels.push(`Reading: ${$('filterReading').selectedOptions[0].textContent}`);
-  const tags = [...document.querySelectorAll('#filterTags input:checked')].map(input => input.value);
-  if (tags.length) labels.push(`Tags (${ $('filterTagMode').value }): ${tags.join(', ')}`);
-  else if ($('filterTagMode').value !== 'ALL') labels.push('Tag matching: Any selected');
-  $('activeFilters').textContent = labels.length ? labels.join(' · ') : 'No active filters';
+function updateFilterButtonState() {
   const active = hasActiveCatalogFilters();
-  document.querySelector('.library-search').classList.toggle('has-active-filters', active);
-  $('clearFilters').disabled = !active;
+  $('filtersToggle').classList.toggle('has-active-filters', active);
+  $('filtersToggle').setAttribute('aria-label', active ? 'Filters active' : 'Filters');
+  $('clearFilters').disabled = !active && $('filterTagMode').value === 'ALL';
 }
 function renderTagFilters(names) {
   availableTags = names;
@@ -459,26 +449,64 @@ function renderDocument(document) {
   const open = element('button', 'document-open');
   open.type = 'button'; open.setAttribute('aria-label', `Select ${document.title}`);
   open.title = 'Double-click or press Enter to open';
-  let selectionTimer = null;
+  const doubleClickWindowMs = 300;
+  let pendingClick = null;
   let activationPointerType = null;
-  const cancelPendingSelection = () => { clearTimeout(selectionTimer); selectionTimer = null; };
+  const cancelPendingSelection = () => {
+    if (pendingClick) clearTimeout(pendingClick.timer);
+    window.document.removeEventListener('pointerup', finishSecondPress, true);
+    window.document.removeEventListener('pointercancel', finishSecondPress, true);
+    window.removeEventListener('blur', finishSecondPress);
+    pendingClick = null;
+  };
+  const commitPendingSelection = () => {
+    if (!pendingClick) return;
+    cancelPendingSelection();
+    selectDocument(document.id);
+  };
+  const finishSecondPress = event => {
+    const click = pendingClick;
+    if (!click || click.secondDownAt === null) return;
+    if (event.type !== 'blur' && event.pointerId !== click.secondPointerId) return;
+    if (event.type !== 'pointerup' || !open.contains(event.target)) { commitPendingSelection(); return; }
+    setTimeout(() => { if (pendingClick === click) commitPendingSelection(); }, 50);
+  };
   const openReader = () => {
     cancelPendingSelection();
     window.tomeshedPreview.close(); window.tomeshedReader.open(document, open);
   };
   let suppressTouchClick = false;
-  open.addEventListener('pointerdown', event => { activationPointerType = event.pointerType; });
+  open.addEventListener('pointerdown', event => {
+    activationPointerType = event.pointerType;
+    if (!pendingClick || event.pointerType === 'touch') return;
+    const now = performance.now();
+    if (now - pendingClick.at >= doubleClickWindowMs) { commitPendingSelection(); return; }
+    clearTimeout(pendingClick.timer);
+    pendingClick.timer = null;
+    pendingClick.secondDownAt = now;
+    pendingClick.secondPointerId = event.pointerId;
+    window.document.addEventListener('pointerup', finishSecondPress, true);
+    window.document.addEventListener('pointercancel', finishSecondPress, true);
+    window.addEventListener('blur', finishSecondPress);
+  });
   open.addEventListener('click', event => {
     if (suppressTouchClick) { event.preventDefault(); suppressTouchClick = false; return; }
     if (window.document.body.classList.contains('reader-open')) return;
-    if (event.detail > 1) { cancelPendingSelection(); return; }
-    if (event.detail === 0 || (event.pointerType || activationPointerType) === 'touch') {
+    const pointerType = event.pointerType || activationPointerType;
+    if (event.detail === 0 || pointerType === 'touch') {
       cancelPendingSelection(); selectDocument(document.id); return;
     }
-    cancelPendingSelection();
-    selectionTimer = setTimeout(() => { selectionTimer = null; selectDocument(document.id); }, 500);
+    if (pendingClick) {
+      const secondClick = event.detail > 1 && pendingClick.pointerType === pointerType &&
+        pendingClick.secondDownAt !== null && pendingClick.secondDownAt - pendingClick.at < doubleClickWindowMs;
+      if (secondClick) { openReader(); return; }
+      commitPendingSelection();
+    }
+    const click = {at: performance.now(), pointerType, secondDownAt: null, timer: null};
+    click.timer = setTimeout(() => { if (pendingClick === click) commitPendingSelection(); }, doubleClickWindowMs);
+    pendingClick = click;
   });
-  open.addEventListener('dblclick', event => { event.preventDefault(); cancelPendingSelection(); openReader(); });
+  open.addEventListener('dblclick', event => event.preventDefault());
   open.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); openReader(); } });
   const fallback = element('span', 'document-fallback', document.source_type.toUpperCase());
   open.append(fallback);
@@ -674,6 +702,17 @@ function panelDownloads(item) {
   });
   group.append(toggle, menu); return group;
 }
+function trashIcon() {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = window.document.createElementNS(namespace, 'svg');
+  for (const [name, value] of Object.entries({'viewBox': '0 0 16 16', 'aria-hidden': 'true', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'})) svg.setAttribute(name, value);
+  for (const d of ['M2.5 4h11', 'M6 4V2.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V4', 'M3.5 4l.7 9a1 1 0 0 0 1 .9h5.6a1 1 0 0 0 1-.9l.7-9', 'M6.5 7v4', 'M9.5 7v4']) {
+    const path = window.document.createElementNS(namespace, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  return svg;
+}
 function renderDocumentInfo(document) {
   const content = element('div', 'document-info');
   const rail = element('div', 'reader-panel-rail');
@@ -682,7 +721,11 @@ function renderDocumentInfo(document) {
   function action(icon, text, compact, onClick, danger = false) {
     const button = element('button', `document-action${danger ? ' danger' : ''}`);
     button.type = 'button'; button.setAttribute('aria-label', text);
-    button.append(element('span', 'document-action-icon', icon));
+    const iconContainer = element('span', 'document-action-icon');
+    iconContainer.setAttribute('aria-hidden', 'true');
+    if (typeof icon === 'function') iconContainer.append(icon());
+    else iconContainer.textContent = icon;
+    button.append(iconContainer);
     if (!compact) button.append(element('span', 'document-action-text', text));
     button.addEventListener('click', onClick);
     return button;
@@ -693,7 +736,7 @@ function renderDocumentInfo(document) {
     try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); removeSelectedDocuments([document.id]); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
     catch (error) { window.tomeshedReader.panelError(document.id, `Could not remove ${document.title}: ${error.message}`); }
   };
-  rail.append(action('▤', 'Add to bookshelf', true, addShelf), action('🗑', 'Remove document', true, remove, true));
+  rail.append(action('▤', 'Add to bookshelf', true, addShelf), action(trashIcon, 'Remove document', true, remove, true));
   details.append(panelTagEditor(document), action('▤', 'Add to bookshelf', false, addShelf));
   details.append(panelInlineField(document, 'title', 'Title', 'metadata', 'PATCH', 'title', 300));
   details.append(panelInlineField(document, 'author', 'Author', 'metadata', 'PATCH', 'author', 300));
@@ -719,7 +762,7 @@ function renderDocumentInfo(document) {
     visibilityInput.addEventListener('change', () => documentMutation(document.id, 'visibility', {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visibility:visibilityInput.value})}));
     visibilityLabel.append(visibilityInput); details.append(visibilityLabel);
   }
-  details.append(action('🗑', 'Remove document', false, remove, true));
+  details.append(action(trashIcon, 'Remove document', false, remove, true));
   return content;
 }
 function showLibraryError(message) { $('libraryNotice').hidden = true; $('libraryError').textContent = message; $('libraryError').hidden = false; }
@@ -752,7 +795,7 @@ function loadVisibleEndless() {
 async function loadCatalog(append = false, preserve = false, requestedPage = null) {
   if (pendingCatalogMutation && preserve) { deferredCatalogRefresh = true; return; }
   if (append && (catalogPageSize !== 'endless' || catalogLoading || catalogLoaded >= catalogTotal)) return;
-  catalogFiltersLabel();
+  updateFilterButtonState();
   const generation = ++catalogGeneration;
   const signature = catalogParams(0).toString();
   const sameQuery = signature === catalogSignature;
@@ -803,7 +846,7 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
       if (focusedId && focusedClass) document.querySelector(`.document-card[data-document-id="${CSS.escape(focusedId)}"] .${String(focusedClass).split(' ')[0]}`)?.focus({preventScroll: true});
       catalogLoaded = endless ? items.length : offset + items.length;
     }
-    renderTagFilters(data.available_tags || []); catalogFiltersLabel();
+    renderTagFilters(data.available_tags || []); updateFilterButtonState();
     $('libraryCount').textContent = `${data.total} ${data.total === 1 ? 'result' : 'results'}`;
     $('libraryEmpty').hidden = data.total !== 0;
     const filtered = Boolean($('librarySearch').value.trim() || $('filterScope').value !== 'all' || $('filterType').value ||
@@ -816,11 +859,21 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
   } catch (error) { if (generation === catalogGeneration) showLibraryError(`Could not load library: ${error.message}`); }
   finally { if (generation === catalogGeneration) { catalogLoading = false; updateCatalogNavigation(); requestAnimationFrame(loadVisibleEndless); await syncSelectionAccess(); } }
 }
+let importJobsGeneration = 0;
 async function loadImportJobs() {
+  const generation = ++importJobsGeneration;
   try {
     const data = await api('/api/imports');
+    if (generation !== importJobsGeneration) return;
     const jobs = data.jobs.filter(job => ['pending', 'processing', 'failed'].includes(job.state));
-    $('activeImportCount').textContent = data.jobs.filter(job => ['pending', 'processing'].includes(job.state)).length || '';
+    const activeCount = data.jobs.filter(job => ['pending', 'processing'].includes(job.state)).length;
+    $('activeImportCount').textContent = activeCount || '';
+    const importsButton = $('importsButton');
+    const importsHadFocus = document.activeElement === importsButton;
+    importsButton.hidden = activeCount === 0;
+    if (importsButton.hidden && importsHadFocus) {
+      ($('importsDrawer').hidden ? $('chooseFile') : $('closeImports')).focus();
+    }
     const list = $('importJobList'); list.replaceChildren();
     for (const job of jobs) {
       const row = element('article', 'import-job');
@@ -840,7 +893,7 @@ async function loadImportJobs() {
       list.append(row);
     }
     if (!jobs.length) list.append(element('p', '', 'No active or failed imports.'));
-  } catch (error) { $('importError').textContent = `Could not load imports: ${error.message}`; $('importError').hidden = false; }
+  } catch (error) { if (generation === importJobsGeneration) { $('importError').textContent = `Could not load imports: ${error.message}`; $('importError').hidden = false; } }
 }
 async function refreshLibrary(preserve = false) { await Promise.all([loadCatalog(false, preserve), loadImportJobs()]); }
 $('librarySearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadCatalog(), 140); });
@@ -911,12 +964,26 @@ const catalogObserver = new IntersectionObserver(entries => {
   if (entries[0].isIntersecting && !library.hidden && !catalogLoading && catalogPageSize === 'endless' && catalogLoaded < catalogTotal) loadCatalog(true);
 }, {rootMargin: '400px'});
 catalogObserver.observe($('catalogSentinel'));
-$('importsButton').addEventListener('click', () => { const drawer = $('importsDrawer'); drawer.hidden = !drawer.hidden; $('importsButton').setAttribute('aria-expanded', String(!drawer.hidden)); if (!drawer.hidden) $('closeImports').focus(); });
-$('closeImports').addEventListener('click', () => { $('importsDrawer').hidden = true; $('importsButton').setAttribute('aria-expanded', 'false'); $('importsButton').focus(); });
+let importsReturnFocus = $('chooseFile');
+function closeImports() {
+  $('importsDrawer').hidden = true;
+  $('importsButton').setAttribute('aria-expanded', 'false');
+  $('chooseFile').setAttribute('aria-expanded', 'false');
+  (importsReturnFocus.hidden ? $('chooseFile') : importsReturnFocus).focus();
+}
+function showImports(opener = $('chooseFile'), focusTarget = null) {
+  if ($('importsDrawer').hidden) importsReturnFocus = opener;
+  $('importsDrawer').hidden = false;
+  $('importsButton').setAttribute('aria-expanded', 'true');
+  $('chooseFile').setAttribute('aria-expanded', 'true');
+  if (focusTarget) $(focusTarget).focus();
+}
+$('importsButton').addEventListener('click', () => $('importsDrawer').hidden ? showImports($('importsButton'), 'closeImports') : closeImports());
+$('chooseFile').addEventListener('click', () => $('importsDrawer').hidden ? showImports($('chooseFile'), 'chooseLocalFile') : closeImports());
+$('closeImports').addEventListener('click', closeImports);
 const activeTransfers = new Map();
 let retrySelection = null;
-function showImportError(message) { $('importsDrawer').hidden = false; $('importError').textContent = message; $('importError').hidden = false; }
-function showImports() { $('importsDrawer').hidden = false; $('importsButton').setAttribute('aria-expanded', 'true'); }
+function showImportError(message) { showImports(); $('importError').textContent = message; $('importError').hidden = false; }
 function transferFile(id, file) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest(); activeTransfers.set(id, xhr);
@@ -942,7 +1009,7 @@ async function importFiles(files, openDrawer = false) {
   }));
   await refreshLibrary(true);
 }
-$('chooseFile').addEventListener('click', () => $('uploadFile').click());
+$('chooseLocalFile').addEventListener('click', () => $('uploadFile').click());
 $('uploadFile').addEventListener('change', event => {
   const files = [...event.target.files]; event.target.value = '';
   if (retrySelection && files.length !== 1) { showImportError('Select one local file to retry.'); retrySelection = null; return; }

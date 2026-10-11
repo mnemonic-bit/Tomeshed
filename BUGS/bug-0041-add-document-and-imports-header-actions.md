@@ -1,6 +1,6 @@
 # Bug 0041 — Header uses text Add Document and always shows Imports
 
-**Status:** Open
+**Status:** Resolved in `0.4.13`
 
 ## Observed behavior
 
@@ -25,8 +25,12 @@ The main page header shows a rectangular `Add document` text button and an `Impo
 
 ## Resolution
 
-Pending implementation.
+The header now has a 44-pixel green circular plus button named `Add document`. The button opens the Imports drawer, which offers local file selection and URL import. `loadImportJobs()` shows the header Imports button only when at least one job is `pending` or `processing`, and shows that active count. The drawer still lists failed jobs with retry actions when the header Imports button is hidden. Before hiding a focused Imports button, `loadImportJobs()` records focus and moves it to Add document or the drawer's Close imports button. Closing the drawer returns focus to its visible opener, or to Add document if Imports became hidden. A request generation prevents an older `/api/imports` response from restoring stale button or drawer state.
 
 ## Verification
 
-**not_run** — This documentation-only report does not change the header. Verify the circular plus button and its accessible name at desktop and narrow widths. Check Imports visibility and count with zero, one, and multiple active jobs; transitions to each terminal state; page reload; and import-state events. Check file and URL import entry points, failed-job retry access, drawer dismissal, and keyboard focus after the last active job finishes.
+**passed** — `.venv/bin/python tests/browser_check_import_header.py` checked the plus button at 1280 px and 320 px, its accessible name and keyboard action, both import entry points, zero/one/two active jobs, every terminal state, failed-job retry access, drawer dismissal and focus, focus transfer at the exact hide transition with the drawer open and closed at 320 px, reload, real registration and cancellation events, and out-of-order job responses.
+
+**passed** — `.venv/bin/python tests/browser_check_file_workflows.py` checked real local file and URL imports, cancellation, and failed-job retry with the updated entry path.
+
+**passed** — `.venv/bin/python tests/browser_check_documents.py` checked the document import drawer and existing document flows.

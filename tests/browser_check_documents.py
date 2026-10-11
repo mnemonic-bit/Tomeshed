@@ -118,6 +118,7 @@ def main():
                     for job_id, state in (("drawer-pending", "pending"), ("drawer-processing", "processing")):
                         conn.execute("INSERT INTO import_jobs(id,document_id,original_filename,source_path,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
                                      (job_id, uuid.uuid4().hex, f"{state}.pdf", "sources/missing.source", state, now, now))
+                page.evaluate("() => loadImportJobs()")
                 page.locator("#importsButton").click()
                 page.wait_for_function("async () => (await (await fetch('/api/imports')).json()).jobs.some(job => job.original_filename === 'Corrupt.pdf' && job.state === 'failed')")
                 page.evaluate("() => loadImportJobs()")

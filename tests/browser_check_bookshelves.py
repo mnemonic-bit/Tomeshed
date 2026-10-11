@@ -286,7 +286,8 @@ def main():
                 page.get_by_text('No matching documents').wait_for()
                 page.locator('#filterScope').select_option('bookshelves')
                 page.wait_for_function("document.querySelectorAll('#documentGrid .bookshelf-card').length === 1")
-                assert page.locator('#activeFilters').inner_text().endswith('Only bookshelves')
+                assert page.get_by_role('button', name='Filters active', exact=True).count() == 1
+                assert page.locator('#filterScope').input_value() == 'bookshelves'
                 page.locator('#librarySearch').fill('PDF Book')
                 page.get_by_text('No matching bookshelves').wait_for()
                 if page.locator('#catalogFilters').is_hidden(): page.locator('#filtersToggle').click()

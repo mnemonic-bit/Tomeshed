@@ -90,7 +90,7 @@ def check_hover_dwell(page, pdf, pdf_id):
 
     thumbnail.hover()
     page.wait_for_timeout(250)
-    pdf.locator('.document-open').evaluate("(button) => button.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))")
+    pdf.locator('.document-open').dblclick(delay=100)
     page.locator('#reader').wait_for(state='visible')
     page.wait_for_timeout(850)
     assert not bubble.is_visible() and not requests, 'Reader open left preview pending'
@@ -194,7 +194,7 @@ def main():
                 page.locator('#previewBubble').wait_for(state='hidden')
                 card(page, 'Warning PDF').locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 1")')
-                page.locator('#previewClose').click()
+                page.evaluate('window.tomeshedPreview.close()')
                 pdf.locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 2")')
                 page.mouse.move(0, 0)
@@ -213,7 +213,7 @@ def main():
                     page.locator('#previewBubble').wait_for(state='visible')
                     page.wait_for_function('document.querySelector("#previewPosition").textContent.includes(" of ")')
                     assert 'Preview unavailable' not in page.locator('#previewContent').inner_text()
-                    page.locator('#previewClose').click()
+                    page.evaluate('window.tomeshedPreview.close()')
                 checks['warning_preserved_source'] = 'passed'
 
                 epub = card(page, 'Preview EPUB')
@@ -223,11 +223,10 @@ def main():
                 page.wait_for_timeout(250)
                 assert not page.locator('#previewBubble').is_visible(), 'Keyboard focus opened preview before 800 ms'
                 page.locator('#previewBubble').wait_for(state='visible')
-                assert page.locator('#previewClose').evaluate('e => document.activeElement === e')
+                assert page.locator('#previewNext').evaluate('e => document.activeElement === e')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.startsWith("Location 1 of ")')
                 assert page.locator('#previewPosition').inner_text().startswith('Location 1 of ')
                 assert page.locator('#previewPrevious').is_disabled()
-                page.keyboard.press('Tab'); assert page.locator('#previewNext').evaluate('e => document.activeElement === e')
                 assert page.locator('#previewNext').evaluate("e => getComputedStyle(e).outlineStyle !== 'none'")
                 page.keyboard.press('Enter')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
@@ -248,7 +247,7 @@ def main():
                 epub.locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 3 of 3")')
                 assert 'word' in page.locator('#previewContent').inner_text()
-                page.locator('#previewClose').click()
+                page.evaluate('window.tomeshedPreview.close()')
                 checks['epub_keyboard_unread'] = 'passed'
 
                 docling = card(page, 'Preview Docling')
@@ -268,7 +267,7 @@ def main():
                 assert page.evaluate(f'''async data => (await fetch('/api/documents/{docling_id}/progress', {{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}})).ok''', docling_saved)
                 docling.locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
-                page.locator('#previewClose').click()
+                page.evaluate('window.tomeshedPreview.close()')
                 checks['saved_epub_docling'] = 'passed'
 
                 # An old image error must not replace content under another card.
@@ -325,7 +324,7 @@ def main():
                         page.wait_for_function('!document.querySelector("#previewPosition").textContent.includes("Loading")')
                         check_geometry(page)
                         page.screenshot(path=str(ARTIFACTS / f'edge-{width}-{index}.png'))
-                        page.locator('#previewClose').click()
+                        page.evaluate('window.tomeshedPreview.close()')
                 checks['edge_placement'] = 'passed'
                 page.set_viewport_size({'width': 390, 'height': 800})
                 page.evaluate('window.scrollTo(0, 0)')
@@ -367,7 +366,7 @@ def main():
                 assert phone.locator('.document-selection-badge').count() == 0, 'Touch hold selected a document'
                 phone.locator('#previewNext').tap()
                 phone.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
-                phone.locator('#previewClose').tap()
+                phone.locator('#versionFooter').tap()
                 assert not phone.locator('#previewBubble').is_visible()
                 assert phone_cover.get_attribute('aria-expanded') == 'false'
                 assert phone_cover.evaluate('e => document.activeElement === e'), 'Touch close did not restore thumbnail focus'

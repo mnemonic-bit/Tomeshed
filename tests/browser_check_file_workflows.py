@@ -71,14 +71,17 @@ def main():
                 checks.append('file overlay, text/link ignored, leave closes')
                 with page.expect_file_chooser() as chooser:
                     page.get_by_role('button',name='Add document').tap()
+                    page.get_by_role('button',name='Choose local files').tap()
                 chooser.value.set_files(str(epub))
                 page.wait_for_function("document.querySelector('#libraryCount').textContent === '1 result'",timeout=60000)
                 assert page.locator('.document-card').count()==1
+                page.locator('#closeImports').click()
                 picker_button=page.get_by_role('button',name='Add document')
                 picker_button.focus()
                 assert picker_button.evaluate('(node) => document.activeElement === node')
                 with page.expect_file_chooser() as chooser:
                     picker_button.press('Enter')
+                    page.get_by_role('button',name='Choose local files').press('Enter')
                 chooser.value.set_files([str(picker_pdf),str(picker_json)])
                 page.wait_for_function("document.querySelector('#libraryCount').textContent === '3 results'",timeout=60000)
                 checks.append('touch EPUB picker and keyboard PDF/JSON picker')
@@ -137,7 +140,7 @@ def main():
                 assert page.locator('#reader').is_hidden()
                 assert 'was removed' in page.locator('#libraryNotice').inner_text()
                 checks.append('confirmed single document removal')
-                page.locator('#importsButton').click()
+                page.get_by_role('button',name='Add document').click()
                 url=f'http://127.0.0.1:{remote.server_port}/Url_Book.pdf?token=secret#fragment'
                 page.locator('#importUrl').fill(url)
                 page.locator('#urlImportForm button').click()
