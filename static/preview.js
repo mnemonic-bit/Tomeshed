@@ -13,6 +13,7 @@
   let pointerY = null;
   let pendingHover = null;
   let pendingFocus = null;
+  const cursors = new Map();
   const suppressFocus = new WeakSet();
   function cancelHover() {
     if (!pendingHover) return;
@@ -89,6 +90,7 @@
     if (!active) return;
     active.index = result.index;
     active.total = result.total;
+    cursors.set(active.id, result.index);
     content.replaceChildren();
     if (result.image) {
       const image = document.createElement('img');
@@ -113,14 +115,15 @@
     next.disabled = result.index >= result.total - 1;
     place();
   }
-  async function load(index = null) {
+  async function load(index = null, opening = false) {
     if (!active) return;
     const owner = active;
     const token = ++generation;
     request?.abort(); request = new AbortController();
     content.textContent = 'Loading preview…'; position.textContent = 'Loading preview…';
     previous.disabled = true; next.disabled = true;
-    const url = `/api/documents/${encodeURIComponent(owner.id)}/preview${index === null ? '' : `/location/${index}`}`;
+    const base = `/api/documents/${encodeURIComponent(owner.id)}/preview`;
+    const url = opening ? `${base}${index ? `?index=${index}` : ''}` : `${base}/location/${index}`;
     try {
       const response = await fetch(url, {signal: request.signal, credentials: 'same-origin'});
       if (!response.ok) throw new Error(`Preview request failed (${response.status})`);
@@ -137,12 +140,12 @@
     if (active?.id === id && active.card === card) { if (focusReturn) { active.focusReturn = true; closeButton.focus(); } return; }
     close();
     window.tomeshedBookshelves?.closePreview();
-    active = {id, card, thumbnail, trigger, focusReturn, pointerInside: Boolean(pointerEvent), index: 0, total: 0};
+    active = {id, card, thumbnail, trigger, focusReturn, pointerInside: Boolean(pointerEvent), index: cursors.get(id) ?? 0, total: 0};
     bubble.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
     place();
     if (focusReturn) closeButton.focus();
-    load();
+    load(active.index, true);
   }
   function scheduleHover(id, card, thumbnail, trigger, event) {
     if (event.buttons || document.body.classList.contains('reader-open') || Date.now() - lastTouch < 600) {

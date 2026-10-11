@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import io
-import json
 import threading
 import zipfile
 from collections import OrderedDict
@@ -297,55 +296,9 @@ def install_preview(library):
         try:
             row, source = lookup(document_id)
             info = content_index(row, source)
-            fmt, total, entries = info['format'], info['total'], info['entries']
-            with db() as conn:
-                saved = conn.execute('SELECT locator_json,percent FROM reading_positions WHERE user_id=? AND document_id=?',
-                                     (g.current_user['id'], document_id)).fetchone()
-            locator = json.loads(saved['locator_json']) if saved and saved['locator_json'] else None
-            approximate = False
-            index, initial_start = 0, None
-            if locator:
-                if fmt == 'pdf':
-                    page = locator.get('page')
-                    if isinstance(page, int) and not isinstance(page, bool) and 1 <= page <= total:
-                        index = page - 1
-                    elif isinstance(page, int) and not isinstance(page, bool):
-                        index = max(0, min(total - 1, page - 1))
-                        approximate = True
-                    else:
-                        index = max(0, min(total - 1, int(float(saved['percent']) / 100 * total)))
-                        approximate = True
-                elif fmt == 'epub':
-                    entry = next((item for item in entries if item['path'] == locator.get('section')), None)
-                    if entry:
-                        content = epub_text(source, document_id, entry['path'])
-                        block = f'{entry["path"]}:{locator.get("element")}'
-                        if block in content.blocks:
-                            block_start = content.blocks[block]
-                            later = [value for value in content.blocks.values() if value > block_start]
-                            block_end = min(later) if later else content.length
-                            fraction = max(0, min(1, float(locator.get('offset') or 0)))
-                            initial_start = min(max(0, content.length - 1),
-                                                block_start + int((block_end - block_start) * fraction))
-                            index = entry['start'] + min(entry['chunks'] - 1, initial_start // text_limit())
-                        else:
-                            index = max(0, min(total - 1, int(float(saved['percent']) / 100 * total)))
-                            approximate = True
-                    else:
-                        index = max(0, min(total - 1, int(float(saved['percent']) / 100 * total)))
-                        approximate = True
-                else:
-                    entry = next((item for item in entries if item['ref'] == locator.get('element')), None)
-                    if entry:
-                        fraction = max(0, min(1, float(locator.get('offset') or 0)))
-                        initial_start = min(entry['length'] - 1, int(fraction * entry['length']))
-                        index = entry['start'] + min(entry['chunks'] - 1, initial_start // text_limit())
-                    else:
-                        index = max(0, min(total - 1, int(float(saved['percent']) / 100 * total)))
-                        approximate = True
-            result = cached(location_key(row, source, index, initial_start),
-                            lambda: location(row, source, index, initial_start))
-            return jsonify(**result, approximate=approximate)
+            index = max(0, min(info['total'] - 1, request.args.get('index', default=0, type=int)))
+            result = cached(location_key(row, source, index), lambda: location(row, source, index))
+            return jsonify(**result, approximate=False)
         except ReaderFailure as exc:
             return failure(exc)
         except HTTPException:

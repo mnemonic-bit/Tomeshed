@@ -41,7 +41,7 @@ def test_pdf_saved_position_cache_resolution_access_and_progress(module):
     assert client.put(f'{base}/progress', json=saved).status_code == 200
     assert client.post(f'{base}/finish').status_code == 200
     initial = client.get(f'{base}/preview').json
-    assert (initial['page'], initial['index'], initial['total']) == (3, 2, 4)
+    assert (initial['page'], initial['index'], initial['total']) == (1, 0, 4)
     assert client.get(f'{base}/preview/location/1').json['page'] == 2
     assert client.get(f'{base}/preview/location/4').status_code == 404
     module.app.config.update(PREVIEW_PDF_MAX_WIDTH=160, PREVIEW_CACHE_LOCATIONS=2)
@@ -88,8 +88,9 @@ def test_pdf_saved_position_cache_resolution_access_and_progress(module):
     assert client.get('/static/preview-page-3.png').status_code != 200
     stored = module.document_library.root / 'sources' / f'{document_id}.source'
     stored.write_bytes(pdf_bytes(2))
-    shortened = client.get(f'{base}/preview').json
-    assert shortened['page'] == 2 and shortened['approximate'] is True
+    shortened = client.get(f'{base}/preview?index=3').json
+    assert shortened['page'] == 2 and shortened['index'] == 1
+    assert client.get(f'{base}/preview').json['page'] == 1
     stored.write_bytes(pdf_bytes(4))
     with module.db() as conn:
         conn.execute('UPDATE documents SET source_path=? WHERE id=?', ('../../etc/passwd', document_id))
@@ -122,7 +123,7 @@ def test_epub_one_section_per_location_limits_warning_and_approximate(module):
     saved = {'locator': {'section': 'OPS/second.xhtml', 'element': 2, 'offset': .3}, 'percent': 75}
     assert client.put(f'{base}/progress', json=saved).status_code == 200
     start = client.get(f'{base}/preview').json
-    assert start['index'] > 1 and 'word' in start['html'] and 'Second chapter' not in start['html']
+    assert start['index'] == 0 and start['html'] == initial['html'] and start['approximate'] is False
     assert client.get(f'{base}/progress').json['position'] == saved
     assert client.get(f'{base}/preview/location/2').json['index'] == 2
     assert client.get(f'{base}/preview/location/{initial["total"] - 1}').json['index'] == initial['total'] - 1
@@ -130,7 +131,7 @@ def test_epub_one_section_per_location_limits_warning_and_approximate(module):
     with module.db() as conn:
         conn.execute('UPDATE reading_positions SET locator_json=? WHERE document_id=?',
                      (json.dumps({'section': 'removed.xhtml', 'element': 2, 'offset': .3}), document_id))
-    assert client.get(f'{base}/preview').json['approximate'] is True
+    assert client.get(f'{base}/preview').json['index'] == 0
 
 
 def test_docling_slice_escaping_and_saved_reference(module):
@@ -144,13 +145,13 @@ def test_docling_slice_escaping_and_saved_reference(module):
     position = {'locator': {'element': '#/texts/1', 'offset': .5}, 'percent': 70}
     assert client.put(f'{base}/progress', json=position).status_code == 200
     selected = client.get(f'{base}/preview').json
-    assert selected['element'] == '#/texts/1' and selected['index'] > 0
+    assert selected['element'] == first['element'] and selected['index'] == 0
     assert selected['characters'] <= 110 and selected['images'] == 0
     assert client.get(f'{base}/progress').json['position'] == position
     with module.db() as conn:
         conn.execute('UPDATE reading_positions SET locator_json=? WHERE document_id=?',
                      (json.dumps({'element': '#/removed/1', 'offset': .5}), document_id))
-    assert client.get(f'{base}/preview').json['approximate'] is True
+    assert client.get(f'{base}/preview').json['index'] == 0
 
 
 def test_docling_cache_bound_evicts_old_location(module):
@@ -200,10 +201,11 @@ def test_epub_saved_mid_paragraph_and_publisher_page_marker(module):
     saved = {'locator': {'section': 'OPS/chapter.xhtml', 'element': 2, 'offset': .5}, 'percent': 50}
     assert client.put(f'{base}/progress', json=saved).status_code == 200
     initial = client.get(f'{base}/preview').json
-    assert initial['index'] > 1 and initial['approximate'] is False
-    assert initial['label'].startswith('Page 12 · Location ')
-    assert '0000' not in initial['html']
-    assert any(f'{number:04d}' in initial['html'] for number in range(295, 315))
+    assert initial['index'] == 0 and initial['approximate'] is False
+    assert initial['label'].startswith('Location 1 of ')
+    assert client.get(f'{base}/preview/location/1').json['label'].startswith('Page 12 · Location ')
+    assert '0000' in initial['html']
+    assert client.get(f'{base}/progress').json['position'] == saved
 
 
 def test_extremely_tall_pdf_is_rendered_within_both_dimension_limits(module):

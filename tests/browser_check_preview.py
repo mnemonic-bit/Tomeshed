@@ -159,10 +159,10 @@ def main():
                 checks['hover_dwell'] = 'passed'
                 pdf.locator('.document-preview').hover()
                 page.locator('#previewBubble').wait_for(state='visible')
-                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 1")')
                 page.wait_for_function("document.querySelector('#previewContent img')?.complete")
                 assert page.locator('#previewContent img').is_visible()
-                page3_image = page.locator('#previewContent img').screenshot()
+                page1_image = page.locator('#previewContent img').screenshot()
                 page.evaluate("document.querySelector('#librarySearch').focus()")
                 assert page.locator('#previewBubble').is_visible()
                 # Cross the space between the cover and its bubble.
@@ -172,19 +172,31 @@ def main():
                 page.mouse.move(to_box['x'] + to_box['width'] / 2, to_box['y'] + to_box['height'] / 2, steps=12)
                 assert page.locator('#previewBubble').is_visible()
                 page.locator('#previewNext').click()
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 2")')
+                page.locator('#previewNext').click()
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
+                page.locator('#previewNext').click()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 4")')
                 page.wait_for_function("document.querySelector('#previewContent img')?.complete")
                 page4_image = page.locator('#previewContent img').screenshot()
-                assert page3_image != page4_image
+                assert page1_image != page4_image
                 assert page.locator('#previewNext').is_disabled()
                 page.locator('#previewPrevious').click()
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
+                page.locator('#previewPrevious').click()
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 2")')
                 page.wait_for_function("document.querySelector('#previewContent img')?.complete")
-                assert page.locator('#previewContent img').screenshot() == page3_image
                 assert check_geometry(page)
                 page.screenshot(path=str(ARTIFACTS / 'pdf-saved-1280.png'))
                 assert page.evaluate(f'''async () => await (await fetch('/api/documents/{pdf_id}/progress')).json()''') == {'position': position, 'completed': True}
                 assert not progress_writes
+                page.mouse.move(0, 0)
+                page.locator('#previewBubble').wait_for(state='hidden')
+                card(page, 'Warning PDF').locator('.document-preview').hover()
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 1")')
+                page.locator('#previewClose').click()
+                pdf.locator('.document-preview').hover()
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 2")')
                 page.mouse.move(0, 0)
                 page.locator('#previewBubble').wait_for(state='hidden')
                 pdf.locator('.document-open').dblclick()
@@ -234,7 +246,7 @@ def main():
                 epub_saved = {'locator': {'section': 'OPS/second.xhtml', 'element': 2, 'offset': .1}, 'percent': 80}
                 assert page.evaluate(f'''async data => (await fetch('/api/documents/{epub_id}/progress', {{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}})).ok''', epub_saved)
                 epub.locator('.document-preview').hover()
-                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2 of 3")')
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 3 of 3")')
                 assert 'word' in page.locator('#previewContent').inner_text()
                 page.locator('#previewClose').click()
                 checks['epub_keyboard_unread'] = 'passed'
@@ -261,7 +273,7 @@ def main():
 
                 # An old image error must not replace content under another card.
                 pdf.locator('.document-preview').hover()
-                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 2")')
                 page.evaluate("window.oldPreviewImage = document.querySelector('#previewContent img')")
                 page.evaluate(f'''() => {{const card=document.querySelector('.document-card[data-document-id="{docling_id}"]');
                   window.tomeshedPreview.open('{docling_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-open'),true);}}''')
@@ -272,27 +284,27 @@ def main():
 
                 # The preview route fails while the preserved source remains readable.
                 page.evaluate('window.tomeshedPreview.close()')
-                page.route(f'**/api/documents/{pdf_id}/preview', lambda route: route.fulfill(status=503, body='unavailable'))
+                page.route(f'**/api/documents/{pdf_id}/preview?index=1', lambda route: route.fulfill(status=503, body='unavailable'))
                 pdf.locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewContent").textContent.includes("Preview unavailable")')
                 pdf.locator('.document-open').dblclick()
                 page.locator('#reader').wait_for(state='visible')
                 page.locator('#readerClose').click()
-                page.unroute(f'**/api/documents/{pdf_id}/preview')
+                page.unroute(f'**/api/documents/{pdf_id}/preview?index=1')
                 checks['failure_reader_available'] = 'passed'
 
                 # Switching cards ignores a late response from the first card.
                 page.evaluate(f'''() => {{ const original=window.fetch; window.fetch=(input, options) => {{
-                  if (String(input).endsWith('/api/documents/{pdf_id}/preview'))
+                  if (String(input).endsWith('/api/documents/{pdf_id}/preview?index=1'))
                     return new Promise(resolve => setTimeout(() => resolve(original(input, options)), 450));
                   return original(input, options);
                 }}; }}''')
                 pdf.locator('.document-preview').hover()
                 page.evaluate(f'''() => {{const card=document.querySelector('.document-card[data-document-id="{epub_id}"]');
                   window.tomeshedPreview.open('{epub_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-open'),true);}}''')
-                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2 of 3")')
+                page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 3 of 3")')
                 page.wait_for_timeout(600)
-                assert page.locator('#previewPosition').inner_text().startswith('Location 2 of 3')
+                assert page.locator('#previewPosition').inner_text().startswith('Location 3 of 3')
                 checks['stale_response'] = 'passed'
                 page.locator('#librarySearch').fill('No such book')
                 page.wait_for_function('document.querySelectorAll(".document-card").length === 0')
@@ -354,7 +366,7 @@ def main():
                 assert not phone.locator('#reader').is_visible(), 'Touch hold opened the reader'
                 assert phone.locator('.document-selection-badge').count() == 0, 'Touch hold selected a document'
                 phone.locator('#previewNext').tap()
-                phone.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 3")')
+                phone.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
                 phone.locator('#previewClose').tap()
                 assert not phone.locator('#previewBubble').is_visible()
                 assert phone_cover.get_attribute('aria-expanded') == 'false'

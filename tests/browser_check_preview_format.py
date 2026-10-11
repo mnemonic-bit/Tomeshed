@@ -134,8 +134,11 @@ def main():
 
                 page.evaluate('window.tomeshedPreview.close()')
                 page.set_viewport_size({'width': 390, 'height': 400})
-                open_preview(page, pdf_id, 595 / 842)
+                open_preview(page, pdf_id)
+                page.wait_for_function("document.querySelector('#previewPosition').textContent.includes('Page 3')")
+                wait_for_layout(page, 420 / 842)
                 compact = geometry(page)
+                assert abs(compact['naturalWidth'] / compact['naturalHeight'] - 420 / 842) < .01, compact
                 assert_sized_to_content(compact)
                 assert compact['contentScrollHeight'] > compact['contentHeight'], compact
                 browser.close()

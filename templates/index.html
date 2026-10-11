@@ -117,26 +117,25 @@
   <dialog id="bookshelfDialog" class="bookshelf-dialog" aria-labelledby="bookshelfDialogTitle"><div class="bookshelf-dialog-head"><h2 id="bookshelfDialogTitle">Bookshelf</h2><button id="closeBookshelfDialog" type="button" aria-label="Close bookshelf">×</button></div><p id="bookshelfStatus" role="status"></p><div id="bookshelfDialogBody"></div></dialog>
   <section id="reader" class="reader" role="dialog" aria-modal="true" aria-labelledby="readerTitle" hidden>
     <header class="reader-toolbar">
-      <button id="readerClose" type="button">Close</button>
-      <h2 id="readerTitle"></h2>
+      <div class="reader-heading"><button id="readerClose" type="button">Close</button><h2 id="readerTitle"></h2></div>
       <span id="readerPosition" role="status">Opening…</span>
-      <div class="reader-controls">
-        <button id="readerPrevious" type="button" aria-label="Previous page or section">Previous</button>
-        <button id="readerNext" type="button" aria-label="Next page or section">Next</button>
-        <button id="readerZoomOut" type="button" aria-label="Zoom out or decrease font size">−</button>
-        <button id="readerZoomIn" type="button" aria-label="Zoom in or increase font size">+</button>
-        <button id="readerFinished" type="button">Mark finished</button>
-        <button id="readerStartOver" type="button">Start over</button>
+      <div class="reader-controls" aria-label="Reader navigation and zoom">
+        <button id="readerPrevious" class="reader-nav" type="button" aria-label="Previous page or section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
+        <button id="readerNext" class="reader-nav" type="button" aria-label="Next page or section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+        <div id="readerZoom" class="reader-zoom" role="group" aria-label="Zoom">
+          <button id="readerZoomOut" type="button" aria-label="Zoom out or decrease font size">−</button>
+          <label class="reader-zoom-value" for="readerZoomPercent"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg><input id="readerZoomPercent" type="text" inputmode="decimal" aria-label="Zoom percentage" value="100"><span aria-hidden="true">%</span></label>
+          <button id="readerZoomIn" type="button" aria-label="Zoom in or increase font size">+</button>
+        </div>
       </div>
     </header>
     <div class="reader-workspace">
       <aside id="readerDocumentPanel" class="reader-document-panel" aria-label="Document info">
-        <div class="reader-panel-heading"><button id="readerPanelMinimize" type="button" aria-label="Minimize document info">‹</button><strong>Document info</strong></div>
+        <div class="reader-panel-heading"><button id="readerPanelMinimize" type="button" aria-label="Minimize document info">«</button><button id="readerPanelRestore" class="reader-panel-restore" type="button" aria-label="Restore document info" hidden>»</button></div>
         <p id="readerPanelError" class="reader-panel-error" role="alert" hidden></p>
         <div id="readerPanelContent"></div>
       </aside>
       <div class="reader-main">
-        <button id="readerPanelRestore" class="reader-panel-restore" type="button" aria-label="Restore document info" hidden>›</button>
         <nav id="readerToc" class="reader-toc" aria-label="Table of contents" hidden></nav>
         <div id="readerScroll" class="reader-scroll" tabindex="0"><div id="readerContent" class="reader-content"></div></div>
         <p id="readerError" class="reader-error" role="alert" hidden></p>

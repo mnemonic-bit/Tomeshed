@@ -14,14 +14,14 @@ Let a signed-in user inspect nearby document content from a library card before 
 - Use **preview bubble** for the speech-bubble panel anchored to a document thumbnail.
 - Use **preview cursor** for the location displayed in the preview bubble. Keep the preview cursor in browser state; do not save it as a reading position.
 - Show previews for Feature 0002 documents with import state `ready` or `ready_with_warning`.
-- Use Feature 0003's source reading order and per-user saved reading position to choose preview content.
+- Use Feature 0003's source reading order to choose preview content. Keep preview cursors independent of per-user saved reading positions.
 - Keep the full reading session, its progress writes, and its completion actions in Feature 0003.
 
 ## Opening and navigation
 
 - Open the preview bubble after 800 ms of pointer hover over a document thumbnail.
 - Open the preview bubble after 800 ms of keyboard focus on the thumbnail or a touch press-and-hold on the thumbnail. A short tap opens the reader.
-- Start the preview cursor at the current user's saved reading position. If the user has no saved reading position, start at the beginning. If a saved locator cannot be resolved, use Feature 0003's approximate restore location and label it as approximate.
+- Start each document's first preview after the library page loads at its first preview location. When a preview closes, keep its last displayed location in browser state and resume there on the same library page. Keep separate cursors for separate documents. If the location count changes, resume at the nearest valid location.
 - Show a location indicator and `Previous` and `Next` controls in the preview bubble. Disable `Previous` at the first preview location and `Next` at the last preview location.
 - On `Previous` or `Next`, change only the preview cursor and displayed content. Keep the library card in place and leave the reader closed.
 - Show one preserved PDF page per preview location as a reduced page image or canvas.
@@ -54,7 +54,7 @@ Let a signed-in user inspect nearby document content from a library card before 
 
 | ID | Observable result | Verification |
 | --- | --- | --- |
-| AC-01 | Holding pointer hover over a `ready` PDF, EPUB, or DoclingDocument JSON thumbnail for 800 ms opens a bubble anchored beside that thumbnail. The bubble starts at the current user's saved reading position, or at the beginning when no position exists. A `ready_with_warning` PDF or EPUB also opens from its preserved source. | Browser dwell checks with all three formats, both applicable import states, and saved and absent positions. |
+| AC-01 | Holding pointer hover over a `ready` PDF, EPUB, or DoclingDocument JSON thumbnail for 800 ms opens a bubble anchored beside that thumbnail. Each document starts at its first preview location after the library page loads, regardless of saved reading position. After preview navigation and closure, reopening that document resumes its last displayed location, while other documents retain separate cursors. If the location count changes, reopening uses a valid location. A `ready_with_warning` PDF or EPUB also opens from its preserved source. | Browser dwell and reopen checks with all three formats, both applicable import states, saved and absent positions, and document switching; backend check with a reduced location count. |
 | AC-02 | `Previous` and `Next` change the displayed PDF page or EPUB/Docling content slice without moving the card or opening the reader. The first and last locations disable the corresponding control. EPUB slices without publisher page markers use location labels rather than exact page labels. | Browser checks with multi-page and multi-section fixtures, including both ends. |
 | AC-03 | The pointer can move from the thumbnail into the bubble and its controls without closing it. The bubble closes when pointer and focus leave both surfaces, on Escape, on `Close preview`, when the reader opens, and when filtering removes the card. | Browser pointer, keyboard, reader-open, and filter checks. |
 | AC-04 | At 390 px and 1280 px viewport widths, a card near each viewport edge keeps the bubble and its controls inside the viewport between the fixed header and footer. The pointer triangle remains aligned with the originating thumbnail. | Browser viewport checks with edge-card fixtures. |

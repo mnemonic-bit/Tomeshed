@@ -426,7 +426,6 @@ function renderTagFilters(names) {
   }
   if (!names.length) target.append(element('span', '', 'No tags yet'));
 }
-function tagButton(name, onClick) { const button = element('button', 'tag-chip', name); button.type = 'button'; button.addEventListener('click', onClick); return button; }
 async function documentMutation(id, suffix, options, onSuccess) {
   const confirmed = catalogItems.get(id);
   function restoreCard(item) {
@@ -443,9 +442,9 @@ async function documentMutation(id, suffix, options, onSuccess) {
     const data = await api(`/api/documents/${encodeURIComponent(id)}/${suffix}`, options);
     catalogItems.set(id, data.document);
     if (data.available_tags) renderTagFilters(data.available_tags);
+    if (onSuccess) onSuccess(data.document);
     restoreCard(data.document);
     window.tomeshedReader?.updateDocument(data.document);
-    if (onSuccess) onSuccess(data.document);
   } catch (error) { restoreCard(confirmed); failure = `Change was not saved: ${error.message}`; window.tomeshedReader?.panelError(id, failure); }
   finally {
     pendingCatalogMutation--;
@@ -545,72 +544,182 @@ function renderDocument(document) {
   card.append(copy);
   return card;
 }
+const panelFieldDrafts = new Map();
+const panelMetadataQueues = new Map();
+async function panelSaveMetadata(item, field, nextValue, onSuccess) {
+  const previous = panelMetadataQueues.get(item.id) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => {
+    const confirmed = catalogItems.get(item.id) || item;
+    const payload = {title: confirmed.title, author: confirmed.author};
+    payload[field] = nextValue;
+    return documentMutation(item.id, 'metadata', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)}, onSuccess);
+  });
+  panelMetadataQueues.set(item.id, pending);
+  try { await pending; }
+  finally { if (panelMetadataQueues.get(item.id) === pending) panelMetadataQueues.delete(item.id); }
+}
+function panelInlineField(item, field, label, suffix, method, bodyKey, maxLength) {
+  const key = `${item.id}:${field}`;
+  const value = item[field] || '';
+  const row = element('div', 'document-inline-field'); row.dataset.field = field;
+  const name = element('strong', 'document-inline-label', `${label}:`);
+  const editor = element('span', 'document-inline-editor');
+  row.append(name, editor);
+  function draw() {
+    editor.replaceChildren();
+    const draft = panelFieldDrafts.get(key);
+    if (!draft) {
+      editor.append(element('span', 'document-inline-value', value));
+      const edit = element('button', 'document-inline-icon', '✎'); edit.type = 'button'; edit.setAttribute('aria-label', `Edit ${label}`);
+      edit.addEventListener('click', () => { panelFieldDrafts.set(key, {value}); draw(); editor.querySelector('input').focus(); });
+      editor.append(edit);
+      return;
+    }
+    const input = window.document.createElement('input'); input.value = draft.value; input.maxLength = maxLength;
+    input.setAttribute('aria-label', label); input.name = `panel-${field}`;
+    input.addEventListener('input', () => { draft.value = input.value; });
+    const save = element('button', 'document-inline-icon', '✓'); save.type = 'button'; save.setAttribute('aria-label', `Save ${label}`);
+    const cancel = element('button', 'document-inline-icon', '×'); cancel.type = 'button'; cancel.setAttribute('aria-label', `Cancel ${label}`);
+    cancel.addEventListener('click', () => { panelFieldDrafts.delete(key); draw(); editor.querySelector('button').focus(); });
+    async function commit() {
+      if (draft.pending) return;
+      draft.value = input.value;
+      if (draft.value === value) { panelFieldDrafts.delete(key); draw(); return; }
+      const nextValue = draft.value;
+      draft.pending = true; input.disabled = true; save.disabled = true; cancel.disabled = true;
+      try {
+        if (suffix === 'metadata') await panelSaveMetadata(item, field, nextValue, () => panelFieldDrafts.delete(key));
+        else await documentMutation(item.id, suffix, {method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({[bodyKey]: nextValue})}, () => panelFieldDrafts.delete(key));
+      } finally {
+        draft.pending = false; input.disabled = false; save.disabled = false; cancel.disabled = false;
+      }
+    }
+    save.addEventListener('click', commit);
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); commit(); }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel.click(); }
+    });
+    editor.append(input, save, cancel);
+  }
+  draw();
+  return row;
+}
+function panelTagEditor(item) {
+  const shell = element('div', 'document-tag-editor');
+  const tokens = element('div', 'document-tag-tokens');
+  for (const tag of item.tags) {
+    const chip = element('span', 'tag-chip', tag);
+    const remove = element('button', 'tag-remove', '×'); remove.type = 'button'; remove.setAttribute('aria-label', `Remove tag ${tag}`);
+    remove.addEventListener('click', () => documentMutation(item.id, 'tags', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})}));
+    chip.append(remove); tokens.append(chip);
+  }
+  const input = window.document.createElement('input'); input.placeholder = 'Add tag'; input.maxLength = 64;
+  input.setAttribute('aria-label', 'Add tag'); input.setAttribute('aria-expanded', 'false');
+  const suggestions = element('div', 'document-tag-suggestions'); suggestions.setAttribute('role', 'listbox'); suggestions.hidden = true;
+  function updateSuggestions() {
+    suggestions.replaceChildren();
+    const query = input.value.trim().toLocaleLowerCase();
+    if (query) for (const tag of availableTags) {
+      if (item.tags.some(attached => attached.toLocaleLowerCase() === tag.toLocaleLowerCase()) || !tag.toLocaleLowerCase().includes(query)) continue;
+      const choice = element('button', 'tag-suggestion', tag); choice.type = 'button'; choice.setAttribute('role', 'option');
+      choice.addEventListener('click', () => add(tag)); suggestions.append(choice);
+    }
+    suggestions.hidden = !suggestions.children.length;
+    input.setAttribute('aria-expanded', String(!suggestions.hidden));
+  }
+  async function add(tag) {
+    if (!tag.trim()) return;
+    await documentMutation(item.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag: tag.trim()})});
+  }
+  input.addEventListener('input', updateSuggestions);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(input.value); }
+    else if (event.key === 'ArrowDown' && !suggestions.hidden) { event.preventDefault(); suggestions.querySelector('button').focus(); }
+    else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); suggestions.hidden = true; input.setAttribute('aria-expanded', 'false'); }
+    else if (event.key === 'Backspace' && !input.value) tokens.querySelector('.tag-chip:last-child button')?.click();
+  });
+  suggestions.addEventListener('keydown', event => {
+    const choices = [...suggestions.querySelectorAll('button')], index = choices.indexOf(window.document.activeElement);
+    if (event.key === 'ArrowDown') { event.preventDefault(); choices[(index + 1) % choices.length].focus(); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); (index ? choices[index - 1] : input).focus(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); suggestions.hidden = true; input.setAttribute('aria-expanded', 'false'); input.focus(); }
+  });
+  tokens.append(input); shell.append(tokens, suggestions);
+  return shell;
+}
+function panelDownloads(item) {
+  const formats = [];
+  if (item.source_available) formats.push({label: `Original ${item.source_type.toUpperCase()}`, button: 'Download original', suffix: 'original'});
+  if (item.structured_available && item.source_type !== 'docling') formats.push({label: 'Docling JSON (converted)', button: 'Download Docling JSON', suffix: 'docling'});
+  if (!formats.length) return null;
+  const group = element('div', 'document-download-split');
+  const href = entry => `/api/documents/${encodeURIComponent(item.id)}/export/${entry.suffix}`;
+  const main = element('a', 'document-download-main', formats[0].button); main.href = href(formats[0]); group.append(main);
+  if (formats.length === 1) return group;
+  const toggle = element('button', 'document-download-toggle', '▾'); toggle.type = 'button';
+  toggle.setAttribute('aria-label', 'Choose download format'); toggle.setAttribute('aria-expanded', 'false');
+  const menu = element('div', 'document-download-menu'); menu.setAttribute('role', 'menu'); menu.hidden = true;
+  for (const entry of formats) {
+    const link = element('a', '', entry.label); link.href = href(entry); link.setAttribute('role', 'menuitem');
+    link.addEventListener('click', () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); }); menu.append(link);
+  }
+  function setOpen(open) { menu.hidden = !open; toggle.setAttribute('aria-expanded', String(open)); if (open) menu.querySelector('a').focus(); }
+  toggle.addEventListener('click', () => setOpen(menu.hidden));
+  toggle.addEventListener('keydown', event => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } });
+  menu.addEventListener('keydown', event => {
+    const links = [...menu.querySelectorAll('a')], index = links.indexOf(window.document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); toggle.focus(); }
+    if (event.key === 'ArrowDown') { event.preventDefault(); links[(index + 1) % links.length].focus(); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); links[(index - 1 + links.length) % links.length].focus(); }
+  });
+  group.append(toggle, menu); return group;
+}
 function renderDocumentInfo(document) {
   const content = element('div', 'document-info');
-  content.append(element('h3', '', document.title), element('p', 'reader-document-author', document.author));
-  const tags = element('div', 'document-tags');
-  document.tags.forEach(tag => tags.append(element('span', 'tag-chip', tag)));
-  content.append(tags);
-  const addShelf = element('button', 'document-bookshelf-action', 'Add to bookshelf');
-  addShelf.type = 'button'; addShelf.addEventListener('click', () => window.tomeshedBookshelves?.choose(document));
-  content.append(addShelf);
-  for (const [name, value] of [['Original filename', document.original_filename], ['Stored filename', document.stored_filename], ...(document.source_url ? [['Source URL', document.source_url]] : []), ['Source type', document.source_type.toUpperCase()], ['Size', `${document.byte_size} bytes`], ['Page count', `${document.page_count ?? 'Unknown'} (${document.count_kind})`], ['Imported', new Date(document.created_at * 1000).toLocaleString()], ['Import state', document.state], ['Reading state', document.reading_state.replace('_', ' ')], ['Last read', document.last_read_at ? new Date(document.last_read_at * 1000).toLocaleString() : 'Never']]) {
+  const rail = element('div', 'reader-panel-rail');
+  const details = element('div', 'reader-panel-details');
+  content.append(rail, details);
+  function action(icon, text, compact, onClick, danger = false) {
+    const button = element('button', `document-action${danger ? ' danger' : ''}`);
+    button.type = 'button'; button.setAttribute('aria-label', text);
+    button.append(element('span', 'document-action-icon', icon));
+    if (!compact) button.append(element('span', 'document-action-text', text));
+    button.addEventListener('click', onClick);
+    return button;
+  }
+  const addShelf = () => window.tomeshedBookshelves?.choose(document);
+  const remove = async () => {
+    if (!confirm(`Remove ${document.title}?`)) return;
+    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); removeSelectedDocuments([document.id]); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
+    catch (error) { window.tomeshedReader.panelError(document.id, `Could not remove ${document.title}: ${error.message}`); }
+  };
+  rail.append(action('▤', 'Add to bookshelf', true, addShelf), action('🗑', 'Remove document', true, remove, true));
+  details.append(panelTagEditor(document), action('▤', 'Add to bookshelf', false, addShelf));
+  details.append(panelInlineField(document, 'title', 'Title', 'metadata', 'PATCH', 'title', 300));
+  details.append(panelInlineField(document, 'author', 'Author', 'metadata', 'PATCH', 'author', 300));
+  for (const [name, value] of [['Original filename', document.original_filename], ...(document.source_url ? [['Source URL', document.source_url]] : []), ['Source type', document.source_type.toUpperCase()], ['Size', `${document.byte_size} bytes`], ['Page count', `${document.page_count ?? 'Unknown'} (${document.count_kind})`], ['Imported', new Date(document.created_at * 1000).toLocaleString()], ['Import state', document.state], ['Reading state', document.reading_state.replace('_', ' ')], ['Last read', document.last_read_at ? new Date(document.last_read_at * 1000).toLocaleString() : 'Never']]) {
     const line = element('p'); line.append(element('strong', '', `${name}: `));
     if (name === 'Reading state') line.dataset.readerField = 'reading-state';
     if (name === 'Last read') line.dataset.readerField = 'last-read';
-    line.append(element('span', '', value)); content.append(line);
+    line.append(element('span', '', value)); details.append(line);
   }
-  const edit = element('form', 'document-metadata-edit');
-  const titleLabel = element('label', '', 'Title'); const titleInput = window.document.createElement('input'); titleInput.name = 'title'; titleInput.value = document.title; titleInput.maxLength = 300; titleLabel.append(titleInput);
-  const authorLabel = element('label', '', 'Author'); const authorInput = window.document.createElement('input'); authorInput.name = 'author'; authorInput.value = document.author; authorInput.maxLength = 300; authorLabel.append(authorInput);
-  const save = element('button', 'secondary', 'Save metadata'); save.type = 'submit'; edit.append(titleLabel, authorLabel, save);
-  edit.addEventListener('submit', event => { event.preventDefault(); documentMutation(document.id, 'metadata', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: titleInput.value, author: authorInput.value})}); }); content.append(edit);
-  const tagEditor = element('form', 'document-tag-editor'); const tagInput = window.document.createElement('input'); tagInput.placeholder = 'Add tag'; tagInput.setAttribute('aria-label', 'Add tag'); tagInput.maxLength = 64;
-  const tagSave = element('button', 'secondary', 'Add tag'); tagSave.type = 'submit'; tagEditor.append(tagInput, tagSave);
-  tagEditor.addEventListener('submit', event => { event.preventDefault(); const value = tagInput.value; documentMutation(document.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag: value})}); }); content.append(tagEditor);
-  const attached = element('div', 'document-tag-editor');
-  document.tags.forEach(tag => attached.append(tagButton(`${tag} ×`, () => documentMutation(document.id, 'tags', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})})))); content.append(attached);
-  const suggestions = element('div', 'document-tag-suggestions');
-  availableTags.filter(tag => !document.tags.some(attached => attached.toLocaleLowerCase() === tag.toLocaleLowerCase())).forEach(tag => suggestions.append(tagButton(tag, () => documentMutation(document.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})}))));
-  content.append(suggestions);
-  if (document.error) content.append(element('p', 'index-warning', document.error));
+  details.append(panelInlineField(document, 'stored_filename', 'Stored filename', 'rename-file', 'POST', 'filename', 255));
+  if (document.error) details.append(element('p', 'index-warning', document.error));
   if (document.state === 'ready_with_warning') {
     const retry = element('button', 'secondary', 'Retry indexing'); retry.type = 'button';
     retry.addEventListener('click', async () => { try { await api(`/api/documents/${encodeURIComponent(document.id)}/retry`, {method: 'POST'}); const updated = await api(`/api/documents/${encodeURIComponent(document.id)}`); window.tomeshedReader.updateDocument(updated); await refreshLibrary(); } catch (error) { window.tomeshedReader.panelError(document.id, `Retry indexing failed: ${error.message}`); } });
-    content.append(retry);
+    details.append(retry);
   }
-  if (document.source_available) {
-    const original = element('a', 'document-export', `Download original (${document.source_type.toUpperCase()})`);
-    original.href = `/api/documents/${encodeURIComponent(document.id)}/export/original`;
-    content.append(original);
-  }
-  if (document.structured_available) {
-    const structured = element('a', 'document-export', 'Download Docling JSON');
-    structured.href = `/api/documents/${encodeURIComponent(document.id)}/export/docling`;
-    content.append(structured);
-  }
-  const renameForm = element('form', 'source-rename-form');
-  const renameLabel = element('label', '', 'Stored filename');
-  const renameInput = element('input'); renameInput.value = document.stored_filename; renameInput.maxLength = 255;
-  renameLabel.append(renameInput);
-  const renameButton = element('button', '', 'Rename file'); renameButton.type = 'submit';
-  renameForm.append(renameLabel, renameButton);
-  renameForm.addEventListener('submit', async event => { event.preventDefault(); await documentMutation(document.id, 'rename-file', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: renameInput.value})}); });
-  content.append(renameForm);
+  const downloads = panelDownloads(document); if (downloads) details.append(downloads);
   if (document.can_manage_visibility) {
     const visibilityLabel = element('label', 'document-visibility', 'Visibility');
     const visibilityInput = window.document.createElement('select');
     for (const value of ['public', 'private']) { const option = window.document.createElement('option'); option.value = value; option.textContent = value; visibilityInput.append(option); }
     visibilityInput.value = document.visibility;
     visibilityInput.addEventListener('change', () => documentMutation(document.id, 'visibility', {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visibility:visibilityInput.value})}));
-    visibilityLabel.append(visibilityInput); content.append(visibilityLabel);
+    visibilityLabel.append(visibilityInput); details.append(visibilityLabel);
   }
-  const removeButton = element('button', 'danger', 'Remove document'); removeButton.type = 'button';
-  removeButton.addEventListener('click', async () => {
-    if (!confirm(`Remove ${document.title}?`)) return;
-    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); removeSelectedDocuments([document.id]); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
-    catch (error) { window.tomeshedReader.panelError(document.id, `Could not remove ${document.title}: ${error.message}`); }
-  }); content.append(removeButton);
+  details.append(action('🗑', 'Remove document', false, remove, true));
   return content;
 }
 function showLibraryError(message) { $('libraryNotice').hidden = true; $('libraryError').textContent = message; $('libraryError').hidden = false; }

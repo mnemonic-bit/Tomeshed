@@ -88,14 +88,12 @@ def load_all(page):
 
 
 def submit_tag(page, document_id, value):
-    """Submit the current reader form after live updates settle."""
+    """Submit the current reader tag field after live updates settle."""
     page.wait_for_function("pendingCatalogMutation === 0 && !catalogLoading")
-    page.evaluate("""({id, tag}) => {
-        if (!window.tomeshedReader.isOpenFor(id)) throw new Error('Wrong document is open');
-        const form = document.querySelector('#readerDocumentPanel form.document-tag-editor');
-        form.querySelector('input').value = tag;
-        form.requestSubmit();
-    }""", {"id": document_id, "tag": value})
+    assert page.evaluate("id => window.tomeshedReader.isOpenFor(id)", document_id)
+    field = page.locator('#readerDocumentPanel').get_by_role('textbox', name='Add tag')
+    field.fill(value)
+    field.press('Enter')
 
 
 def open_info(page, item):
@@ -178,26 +176,26 @@ def main():
                 info_text = info.inner_text()
                 for field in ("Original filename: Source_6.pdf", "Source type: PDF", "Size:", "Page count: 7 (exact)", "Imported:", "Import state: ready_with_warning", "Indexing warning: test", "Last read: Never"):
                     assert field in info_text
-                info.get_by_role("textbox", name="Add tag").fill("  History   ")
-                info.get_by_role("button", name="Add tag", exact=True).click()
-                page.wait_for_function("document.querySelector('#readerDocumentPanel .document-tags').textContent.includes('History')")
+                submit_tag(page, "book06", "  History   ")
+                info.get_by_role("button", name="Remove tag History").wait_for()
                 load_all(page)
                 book5 = card(page, "Book 5")
                 info = open_info(page, book5)
-                assert info.locator(".document-tag-suggestions").get_by_role("button", name="History").count() == 1
+                info.get_by_role('textbox', name='Add tag').fill('His')
+                assert info.get_by_role('option', name='History').count() == 1
                 submit_tag(page, "book05", "history")
-                page.wait_for_function("document.querySelector('#readerDocumentPanel .document-tags').textContent.includes('History')")
+                info.get_by_role("button", name="Remove tag History").wait_for()
                 assert page.evaluate("async () => (await (await fetch('/api/tags')).json()).tags") == ["History"]
                 for document_id in ("book06", "book05"):
                     item = page.locator(f'.document-card[data-document-id="{document_id}"]')
                     info = open_info(page, item)
-                    info.locator(".document-tag-editor").last.get_by_role("button", name="History ×").click()
-                    page.wait_for_function("id => !document.querySelector('#readerDocumentPanel .document-tags').textContent.includes('History')", arg=document_id)
+                    info.get_by_role("button", name="Remove tag History").click()
+                    info.get_by_role("button", name="Remove tag History").wait_for(state='detached')
                 assert page.evaluate("async () => (await (await fetch('/api/tags')).json()).tags") == []
                 book5 = card(page, "Book 5")
                 open_info(page, book5)
                 submit_tag(page, "book05", "History")
-                page.wait_for_function("document.querySelector('#readerDocumentPanel .document-tags').textContent.includes('History')")
+                page.locator('#readerDocumentPanel').get_by_role("button", name="Remove tag History").wait_for()
                 checks["tag_reuse_suggestion"] = "passed"
                 page.locator("#readerClose").click()
                 for query, expected in (("Older epub", "Page count: 3 (estimated)"), ("Older docling", "Page count: Unknown (unknown)")):
@@ -213,9 +211,12 @@ def main():
                 # Correct metadata and search; failed mutation leaves confirmed text.
                 book5 = card(page, "Book 5")
                 info = open_info(page, book5)
-                info.get_by_label("Title").fill("Corrected Atlas")
-                info.get_by_label("Author").fill("Revised Ada")
-                info.get_by_role("button", name="Save metadata").click()
+                info.get_by_role('button', name='Edit Title').click()
+                info.get_by_role('textbox', name='Title').fill("Corrected Atlas")
+                info.get_by_role("button", name="Save Title").click()
+                info.get_by_role('button', name='Edit Author').click()
+                info.get_by_role('textbox', name='Author').fill("Revised Ada")
+                info.get_by_role("button", name="Save Author").click()
                 page.wait_for_function("document.querySelector('.document-card[data-document-id=book05] h3').textContent === 'Corrected Atlas'")
                 assert page.evaluate("async () => (await (await fetch('/api/documents/book05')).json()).original_filename") == "Source_5.pdf"
                 page.locator("#readerClose").click()
@@ -229,14 +230,16 @@ def main():
                 page.route("**/api/documents/book05/metadata", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":"controlled metadata rejection"}'))
                 book5 = card(page, "Corrected Atlas")
                 info = open_info(page, book5)
-                info.get_by_label("Title").fill("Unconfirmed title")
-                info.get_by_label("Author").fill("Unconfirmed author")
-                info.get_by_role("button", name="Save metadata").click()
+                info.get_by_role('button', name='Edit Title').click()
+                info.get_by_role('textbox', name='Title').fill("Unconfirmed title")
+                info.get_by_role('button', name='Edit Author').click()
+                info.get_by_role('textbox', name='Author').fill("Unconfirmed author")
+                info.get_by_role("button", name="Save Title").click()
                 info.get_by_text("Change was not saved: controlled metadata rejection").wait_for()
                 book5 = card(page, "Corrected Atlas")
                 assert info.is_visible()
-                assert info.get_by_label("Title").input_value() == "Unconfirmed title"
-                assert info.get_by_label("Author").input_value() == "Unconfirmed author"
+                assert info.get_by_role('textbox', name='Title').input_value() == "Unconfirmed title"
+                assert info.get_by_role('textbox', name='Author').input_value() == "Unconfirmed author"
                 page.unroute("**/api/documents/book05/metadata")
                 checks["metadata_failure_keeps_input"] = "passed"
                 page.locator("#readerClose").click()
@@ -317,7 +320,7 @@ def main():
                 load_all(page)
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 3")
                 assert ids(page) == ["book05", "book03", "book02"]
-                page.locator('.document-card[data-document-id="book03"] .document-star').click()
+                page.locator('.document-card[data-document-id="book03"] .document-star').evaluate('button => button.click()')
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 2")
                 assert ids(page) == ["book05", "book02"]
                 if page.locator("#catalogFilters").is_hidden(): page.locator("#filtersToggle").click()
@@ -339,9 +342,9 @@ def main():
                 book6.locator(".document-open").dblclick()
                 page.locator("#reader").wait_for(state="visible")
                 page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'in_progress'")
-                page.locator("#readerFinished").click()
+                assert page.request.post(base + "/api/documents/book06/finish").json()["completed"] is True
                 page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'finished'")
-                page.locator("#readerStartOver").click()
+                assert page.request.post(base + "/api/documents/book06/start-over").json()["completed"] is False
                 page.wait_for_function("async () => (await (await fetch('/api/documents/book06')).json()).reading_state === 'in_progress'")
                 page.locator("#readerClose").click()
                 assert "Last read: Never" not in open_info(page, card(page, "Book 6")).inner_text()

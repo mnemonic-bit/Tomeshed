@@ -1,6 +1,7 @@
-"""Check document controls in the reader panel in Chromium."""
+"""Check the reader document panel in Chromium."""
 
 import json
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from playwright.sync_api import sync_playwright
 
 from browser_check_reader import port_number, seed, start_server
 from test_documents import pdf_bytes
+from test_reader import docling_fixture
 
 
 def open_document(page, document_id):
@@ -24,6 +26,11 @@ def main():
         process = start_server(folder, port)
         try:
             document_id, _ = seed(folder, pdf_bytes(8), 'pdf', 'Panel PDF', 'ready_with_warning')
+            other_id, _ = seed(folder, pdf_bytes(2), 'pdf', 'Other panel PDF')
+            artifact = folder / 'storage' / 'panel.json'
+            artifact.write_bytes(docling_fixture())
+            with sqlite3.connect(folder / 'library.db') as conn:
+                conn.execute('UPDATE documents SET artifact_path=? WHERE id=?', ('panel.json', document_id))
             base = f'http://127.0.0.1:{port}'
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
@@ -35,73 +42,128 @@ def main():
                 page.get_by_role('button', name='Set password and open library').click()
                 page.wait_for_url(base + '/')
                 page.locator(f'.document-card[data-document-id="{document_id}"]').wait_for()
-                assert page.locator('.document-info-button').count() == 0
-                page.evaluate("""() => { const originalFetch = window.fetch;
-                    window.fetch = (...args) => {
-                        const response = originalFetch(...args);
-                        return String(args[0]).endsWith('/reader-open')
-                            ? response.then(value => new Promise(resolve => setTimeout(() => resolve(value), 450)))
-                            : response;
-                    };
-                }""")
                 panel = open_document(page, document_id)
-                title = panel.get_by_label('Title')
-                title.fill('Unsaved before reader open')
-                title.focus()
-                panel.evaluate('el => el.scrollTop = 220')
-                before_state_scroll = panel.evaluate('el => el.scrollTop')
-                page.wait_for_function("document.querySelector('#readerDocumentPanel').textContent.includes('Reading state: in progress')")
-                assert 'Last read: Never' not in panel.inner_text()
-                assert title.input_value() == 'Unsaved before reader open'
-                assert title.evaluate('el => document.activeElement === el')
-                assert panel.evaluate('el => el.scrollTop') == before_state_scroll
-                assert 500 <= panel.bounding_box()['width'] <= 580
-                assert 'Author' in panel.inner_text()
-                assert 'Original filename:' in panel.inner_text()
-                assert panel.get_by_role('button', name='Add to bookshelf').is_visible()
+                assert panel.get_by_text('Document info', exact=True).count() == 0
+                assert panel.locator('h3').count() == 0
+                assert page.locator('#readerTitle').inner_text() == 'Panel PDF'
+                assert panel.locator('.document-inline-field[data-field="title"]').count() == 1
+                assert panel.get_by_text('Original filename:').is_visible()
                 assert panel.get_by_role('button', name='Retry indexing').is_visible()
-                assert panel.get_by_label('Visibility').is_visible()
+                downloads = panel.locator('.document-download-split')
+                assert downloads.get_by_role('link', name='Download original').get_attribute('href').endswith('/export/original')
+                downloads.get_by_role('button', name='Choose download format').click()
+                assert downloads.get_by_role('menuitem', name='Original PDF').is_visible()
+                assert downloads.get_by_role('menuitem', name='Docling JSON (converted)').is_visible()
+                page.keyboard.press('Escape')
+                assert downloads.locator('.document-download-menu').is_hidden()
+                downloads.get_by_role('button', name='Choose download format').press('ArrowDown')
+                assert downloads.get_by_role('menuitem', name='Original PDF').evaluate('el => document.activeElement === el')
+                page.keyboard.press('ArrowDown')
+                assert downloads.get_by_role('menuitem', name='Docling JSON (converted)').evaluate('el => document.activeElement === el')
+                page.keyboard.press('Escape')
+
+                tag_input = panel.get_by_role('textbox', name='Add tag')
+                tag_input.fill('Research')
+                tag_input.press('Enter')
+                panel.get_by_role('button', name='Remove tag Research').wait_for()
+                assert page.evaluate("async (id) => (await fetch(`/api/documents/${id}/tags`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tag:'Research'})})).ok", other_id)
+                panel.get_by_role('button', name='Remove tag Research').click()
+                panel.get_by_role('button', name='Remove tag Research').wait_for(state='detached')
+                tag_input = panel.get_by_role('textbox', name='Add tag')
+                tag_input.fill('sea')
+                assert panel.get_by_role('option', name='Research').is_visible()
+                tag_input.press('ArrowDown')
+                assert panel.get_by_role('option', name='Research').evaluate('el => document.activeElement === el')
+                page.keyboard.press('Enter')
+                panel.get_by_role('button', name='Remove tag Research').wait_for()
+                tag_input = panel.get_by_role('textbox', name='Add tag')
+                tag_input.fill('nomatch')
+                assert panel.get_by_role('option', name='Research').count() == 0
+                tag_input.press('Escape')
+                assert panel.locator('.document-tag-suggestions').is_hidden()
+
+                panel.get_by_role('button', name='Edit Title').click()
+                title = panel.get_by_role('textbox', name='Title')
                 title.fill('Unsaved title')
-                title.focus()
-                panel.evaluate('el => el.scrollTop = 220')
-                panel_scroll = panel.evaluate('el => el.scrollTop')
-                reader_scroll = page.locator('#readerScroll')
-                page.locator('#readerPanelMinimize').click()
-                assert panel.is_hidden()
-                assert page.locator('#readerPanelRestore').is_visible()
-                page.locator('#readerPanelRestore').click()
-                assert panel.is_visible() and title.input_value() == 'Unsaved title'
-                assert panel.evaluate('el => el.scrollTop') == panel_scroll, (panel_scroll, panel.evaluate('el => el.scrollTop'))
-                assert title.evaluate('el => document.activeElement === el')
-                reader_scroll.evaluate('el => el.scrollTop = 500')
-                before = reader_scroll.evaluate('el => el.scrollTop')
-                page.locator('#readerPanelMinimize').click()
-                assert reader_scroll.evaluate('el => el.scrollTop') > 0
-                page.locator('#readerPanelRestore').click()
-                assert abs(reader_scroll.evaluate('el => el.scrollTop') - before) < 150
-                title.focus()
-                panel.evaluate('el => el.scrollTop = 200')
-                before_state_scroll = panel.evaluate('el => el.scrollTop')
-                page.evaluate("document.querySelector('#readerFinished').click()")
-                page.wait_for_function("document.querySelector('#readerDocumentPanel').textContent.includes('Reading state: finished')")
-                assert title.input_value() == 'Unsaved title'
-                assert title.evaluate('el => document.activeElement === el')
-                assert panel.evaluate('el => el.scrollTop') == before_state_scroll
-                page.evaluate("document.querySelector('#readerStartOver').click()")
-                page.wait_for_function("document.querySelector('#readerDocumentPanel').textContent.includes('Reading state: in progress')")
-                assert title.input_value() == 'Unsaved title'
-                assert title.evaluate('el => document.activeElement === el')
-                assert panel.evaluate('el => el.scrollTop') == before_state_scroll
+                page.locator('#readerScroll').evaluate('el => el.scrollTop = 500')
+                reading_before = page.locator('#readerScroll').evaluate('el => el.scrollTop')
+                panel.get_by_role('button', name='Minimize document info').click()
+                assert panel.is_visible() and 'is-minimized' in panel.get_attribute('class')
+                assert panel.locator('.reader-panel-details').is_hidden()
+                assert panel.get_by_role('button', name='Add to bookshelf').is_visible()
+                assert panel.get_by_role('button', name='Remove document').is_visible()
+                assert panel.get_by_role('button', name='Restore document info').is_visible()
+                rail_box = panel.bounding_box()
+                content_box = page.locator('#readerScroll').bounding_box()
+                assert 60 <= rail_box['width'] <= 70 and content_box['x'] >= rail_box['x'] + rail_box['width']
+                assert abs(rail_box['height'] - content_box['height']) < 2
+                for control in panel.locator('.reader-panel-rail button').all():
+                    assert control.bounding_box()['width'] >= 44 and control.bounding_box()['height'] >= 44
+                panel.get_by_role('button', name='Restore document info').click()
+                assert abs(page.locator('#readerScroll').evaluate('el => el.scrollTop') - reading_before) < 150
+                assert panel.get_by_role('textbox', name='Title').evaluate('el => document.activeElement === el')
+                panel.get_by_role('button', name='Minimize document info').click()
+                page.locator('#readerClose').click()
+                panel = open_document(page, document_id)
+                assert 'is-minimized' in panel.get_attribute('class')
+                panel.get_by_role('button', name='Restore document info').press('Enter')
+                assert 'is-minimized' not in panel.get_attribute('class')
+                assert panel.get_by_role('textbox', name='Title').input_value() == 'Unsaved title'
+                title = panel.get_by_role('textbox', name='Title')
+                title.press('Escape')
+                assert panel.get_by_role('textbox', name='Title').count() == 0
+
                 page.route(f'**/api/documents/{document_id}/metadata', lambda route: route.fulfill(status=503, content_type='application/json', body=json.dumps({'error': 'controlled rejection'})))
+                panel.get_by_role('button', name='Edit Title').click()
+                title = panel.get_by_role('textbox', name='Title')
                 title.fill('Rejected title')
-                panel.get_by_role('button', name='Save metadata').click()
+                title.press('Enter')
                 panel.get_by_role('alert').get_by_text('controlled rejection', exact=False).wait_for()
-                assert page.locator('#reader').is_visible()
+                assert panel.get_by_role('textbox', name='Title').input_value() == 'Rejected title'
                 page.unroute(f'**/api/documents/{document_id}/metadata')
-                title.fill('Saved title')
-                panel.get_by_role('button', name='Save metadata').click()
-                panel.get_by_label('Title').wait_for()
-                page.wait_for_function("document.querySelector('#readerTitle').textContent === 'Saved title'")
+                panel.get_by_role('button', name='Save Title').click()
+                page.wait_for_function("document.querySelector('#readerTitle').textContent === 'Rejected title'")
+                panel.get_by_role('button', name='Edit Author').click()
+                panel.get_by_role('textbox', name='Author').fill('Changed author')
+                panel.get_by_role('button', name='Save Author').click()
+                panel.get_by_text('Changed author').wait_for()
+                panel.get_by_role('button', name='Edit Title').click()
+                panel.get_by_role('button', name='Edit Author').click()
+                panel.get_by_role('textbox', name='Title').fill('Concurrent title')
+                panel.get_by_role('textbox', name='Author').fill('Concurrent author')
+                panel.evaluate("root => { root.querySelector('[aria-label=\"Save Title\"]').click(); root.querySelector('[aria-label=\"Save Author\"]').click(); }")
+                page.wait_for_function('pendingCatalogMutation === 0 && !catalogLoading')
+                saved = page.evaluate('async id => (await (await fetch(`/api/documents/${id}`)).json())', document_id)
+                assert (saved['title'], saved['author']) == ('Concurrent title', 'Concurrent author'), saved
+                assert page.locator('#readerTitle').inner_text() == 'Concurrent title'
+                panel.get_by_role('button', name='Edit Stored filename').click()
+                name = panel.get_by_role('textbox', name='Stored filename')
+                name.fill('Renamed panel.pdf')
+                name.press('Enter')
+                panel.get_by_text('Renamed panel.pdf').wait_for()
+                assert panel.get_by_text('Panel PDF.pdf').is_visible()
+                panel.get_by_role('button', name='Edit Stored filename').click()
+                panel.get_by_role('textbox', name='Stored filename').fill('Discarded.pdf')
+                panel.get_by_role('button', name='Cancel Stored filename').click()
+                assert panel.get_by_text('Renamed panel.pdf').is_visible()
+                visibility = panel.get_by_label('Visibility')
+                colors = []
+                for theme in ('light', 'dark'):
+                    page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
+                    colors.append(visibility.evaluate('el => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor, getComputedStyle(el.options[0]).backgroundColor]'))
+                    assert colors[-1][1] == colors[-1][2] and colors[-1][0] != colors[-1][1]
+                assert colors[0] != colors[1]
+                page.locator('#readerClose').click()
+
+                other_panel = open_document(page, other_id)
+                assert 'is-minimized' not in other_panel.get_attribute('class')
+                assert other_panel.locator('.document-download-split').count() == 1
+                assert other_panel.get_by_role('button', name='Choose download format').count() == 0
+                other_panel.get_by_role('button', name='Minimize document info').click()
+                page.locator('#readerClose').click()
+                panel = open_document(page, document_id)
+                assert 'is-minimized' in panel.get_attribute('class')
+                panel.get_by_role('button', name='Restore document info').click()
                 page.locator('#readerClose').click()
 
                 page.evaluate("async () => (await fetch('/api/users', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:'reader-normal',password:'normal-password',role:'normal'})})).ok")
@@ -113,16 +175,20 @@ def main():
                 phone.get_by_role('button', name='Sign in').click()
                 phone.wait_for_url(base + '/')
                 phone.locator(f'.document-card[data-document-id="{document_id}"]').wait_for()
-                mobile_panel = open_document(phone, document_id)
-                assert not mobile_panel.get_by_label('Visibility').count()
-                assert mobile_panel.get_by_role('button', name='Add to bookshelf').is_visible()
-                bounds = mobile_panel.bounding_box()
-                assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390
-                reader_bounds = phone.locator('#readerScroll').bounding_box()
-                assert reader_bounds['height'] >= 120 and reader_bounds['y'] >= bounds['y'] + bounds['height']
-                phone.locator('#readerPanelMinimize').tap()
-                assert phone.locator('#readerPanelRestore').is_visible()
-                assert phone.locator('#readerScroll').is_visible()
+                mobile = open_document(phone, document_id)
+                assert not mobile.get_by_label('Visibility').count()
+                mobile.get_by_role('button', name='Minimize document info').tap()
+                rail = mobile.bounding_box()
+                reading = phone.locator('#readerScroll').bounding_box()
+                assert 60 <= rail['width'] <= 70 and rail['x'] + rail['width'] <= reading['x']
+                assert abs(rail['height'] - reading['height']) < 2 and reading['width'] >= 250
+                assert mobile.get_by_role('button', name='Add to bookshelf').is_visible()
+                assert mobile.get_by_role('button', name='Remove document').is_visible()
+                phone.locator('#readerClose').tap()
+                mobile = open_document(phone, document_id)
+                assert 'is-minimized' in mobile.get_attribute('class')
+                mobile.get_by_role('button', name='Restore document info').tap()
+                assert 'is-minimized' not in mobile.get_attribute('class')
                 browser.close()
             print('passed: reader document panel')
         finally:

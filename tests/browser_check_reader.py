@@ -131,9 +131,12 @@ def main():
                 page.locator('#librarySearch').fill('PDF')
                 page.wait_for_function("document.querySelectorAll('.document-card').length === 4")
                 page.locator('.document-card').filter(has_text='Warning PDF').locator('.document-open').scroll_into_view_if_needed()
-                library_scroll = page.evaluate('window.scrollY')
-                assert library_scroll > 0
+                page.evaluate("""() => document.addEventListener('dblclick', event => {
+                    if (event.target.closest('.document-card')) window.libraryScrollAtOpen = window.scrollY;
+                }, {capture: true, once: true})""")
                 warning = open_card(page, 'Warning PDF')
+                library_scroll = page.evaluate('window.libraryScrollAtOpen')
+                assert library_scroll > 0
                 assert page.locator('#readerTitle').inner_text() == 'Warning PDF'
                 page.locator('#readerClose').click()
                 assert page.locator('#librarySearch').input_value() == 'PDF'
@@ -189,13 +192,12 @@ def main():
                 open_card(page, 'Reader PDF')
                 assert 'Page 7' in page.locator('#readerPosition').inner_text()
                 page.locator('#readerClose').click()
-                # Completion and positions are independent for two browser accounts.
+                # Backend completion and positions are independent for two browser accounts.
                 created = page.request.post(base + '/api/users', data={'username': 'reader2', 'password': 'second-password', 'role': 'normal'})
                 assert created.status == 201
                 open_card(page, 'Reader PDF')
-                page.locator('#readerFinished').click()
-                page.wait_for_function("document.querySelector('#readerFinished').textContent === 'Finished'")
-                assert page.locator('#readerFinished').inner_text() == 'Finished'
+                assert page.locator('#readerFinished, #readerStartOver').count() == 0
+                assert page.request.post(base + f'/api/documents/{pdf_id}/finish').json()['completed'] is True
                 assert page.request.get(base + f'/api/documents/{pdf_id}/progress').json()['position']['locator']['page'] == 7
                 page.locator('#readerClose').click()
                 assert pdf_path.exists()
@@ -204,7 +206,7 @@ def main():
                 page.locator('#librarySearch').fill('Reader PDF')
                 open_card(page, 'Reader PDF')
                 assert 'Page 1' in page.locator('#readerPosition').inner_text()
-                assert page.locator('#readerFinished').inner_text() == 'Mark finished'
+                assert page.request.get(base + f'/api/documents/{pdf_id}/progress').json()['completed'] is False
                 page.locator('[data-page="2"]').scroll_into_view_if_needed()
                 page.wait_for_function("document.querySelector('#readerPosition').textContent.includes('Page 2')")
                 page.wait_for_timeout(650)
@@ -214,10 +216,10 @@ def main():
                 page.locator('#librarySearch').fill('Reader PDF')
                 open_card(page, 'Reader PDF')
                 assert 'Page 7' in page.locator('#readerPosition').inner_text()
-                assert page.locator('#readerFinished').inner_text() == 'Finished'
-                page.locator('#readerStartOver').click()
-                page.wait_for_function("document.querySelector('#readerFinished').textContent === 'Mark finished'")
-                assert page.locator('#readerFinished').inner_text() == 'Mark finished'
+                assert page.request.get(base + f'/api/documents/{pdf_id}/progress').json()['completed'] is True
+                page.locator('#readerClose').click()
+                assert page.request.post(base + f'/api/documents/{pdf_id}/start-over').json() == {'position': None, 'completed': False}
+                open_card(page, 'Reader PDF')
                 assert 'Page 1' in page.locator('#readerPosition').inner_text()
                 assert page.request.get(base + f'/api/documents/{pdf_id}/progress').json() == {'position': None, 'completed': False}
                 page.locator('[data-page="7"]').scroll_into_view_if_needed()
@@ -370,7 +372,7 @@ def main():
                 browser.close()
             report = {'result': 'passed', 'pdf_id': pdf_id, 'epub_id': epub_id, 'docling_id': json_id,
                       'checks': ['card focus and search', 'PDF page 7 close/reload/restart', 'shorter PDF fallback',
-                                 'two user progress and completion', 'EPUB text image TOC and reflow',
+                                 'two user progress and completion API', 'EPUB text image TOC and reflow',
                                  'EPUB invalidated locator fallback', 'Docling escaping and element fallback',
                                  'missing rendering and unsupported states', '500 ms coalescing and hidden/Close saves']}
             (ARTIFACTS / 'report.json').write_text(json.dumps(report, indent=2))

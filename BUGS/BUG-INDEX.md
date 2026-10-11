@@ -32,3 +32,10 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0026 — Selecting a second document clears the first selection](bug-0026-multi-document-selection-and-actions.md) — Resolved in `0.3.0`.
 - [Bug 0027 — Double-click flashes selection and selected cards show an Open overlay](bug-0027-double-click-selection-flash-and-open-overlay.md) — Resolved in `0.3.1`.
 - [Bug 0028 — Bookshelf cards have no hover preview of their documents](bug-0028-bookshelf-hover-preview.md) — Resolved in `0.4.0`.
+- [Bug 0029 — Preview position follows reader progress and resets on close](bug-0029-preview-position-shares-reader-progress.md) — Resolved in `0.4.1`.
+- [Bug 0030 — Reader document panel state resets on open](bug-0030-reader-document-panel-state-resets-on-open.md) — Resolved in `0.4.2`.
+- [Bug 0031 — Reader document panel needs a compact action rail and inline editors](bug-0031-reader-document-panel-redesign.md) — Resolved in `0.4.3`.
+- [Bug 0032 — Reader controls occupy a second toolbar row and lack direct zoom entry](bug-0032-reader-header-controls-and-zoom.md) — Resolved in `0.4.4`.
+- [Bug 0033 — Closing the reader shifts the library scroll position](bug-0033-reader-close-shifts-library-scroll.md) — Resolved in `0.4.5` (browser check baseline).
+- [Bug 0034 — Organization browser check uses removed reader actions](bug-0034-organization-browser-check-removed-reader-actions.md) — Resolved in `0.4.6`.
+- [Bug 0035 — Preview format check assumes the preview cursor resets](bug-0035-preview-format-check-assumes-cursor-reset.md) — Resolved in `0.4.7`.

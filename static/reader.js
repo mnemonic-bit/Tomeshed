@@ -7,7 +7,8 @@
   const panel = $('readerDocumentPanel');
   const panelContent = $('readerPanelContent');
   const panelErrorNode = $('readerPanelError');
-  const controls = ['readerPrevious', 'readerNext', 'readerZoomOut', 'readerZoomIn', 'readerFinished', 'readerStartOver'].map($);
+  const controls = ['readerPrevious', 'readerNext', 'readerZoomOut', 'readerZoomIn', 'readerZoomPercent'].map($);
+  const zoomField = $('readerZoomPercent');
   let current = null;
   let generation = 0;
   let timer = null;
@@ -16,6 +17,7 @@
   let skipScroll = false;
   let panelReturnFocus = null;
   let panelPointerFocus = null;
+  let panelMinimized = false;
 
   function isOpenFor(id) { return Boolean(current && current.id === id && !overlay.hidden); }
   function panelError(id, message) {
@@ -31,10 +33,12 @@
     const name = active?.getAttribute('name');
     const label = active?.getAttribute('aria-label') || active?.textContent;
     panelContent.replaceChildren(window.tomeshedCatalog.renderDocumentInfo(item));
+    panelContent.querySelector('.reader-panel-details')?.toggleAttribute('inert', panelMinimized);
+    panelContent.querySelector('.reader-panel-rail')?.toggleAttribute('inert', !panelMinimized);
     panel.scrollTop = scrollTop;
     $('readerTitle').textContent = item.title;
     panelErrorNode.hidden = true;
-    if (active && !panel.hidden) {
+    if (active) {
       const next = (name && panel.querySelector(`[name="${CSS.escape(name)}"]`)) ||
         [...panel.querySelectorAll('button, input, select, a')].find(node => (node.getAttribute('aria-label') || node.textContent) === label);
       (next || $('readerPanelMinimize')).focus({preventScroll: true});
@@ -51,16 +55,23 @@
   }
   function setPanelMinimized(minimized) {
     const position = current?.opened ? positionNow() : null;
+    panelMinimized = minimized;
     if (minimized) {
       panelReturnFocus = panelPointerFocus || (panel.contains(document.activeElement) ? document.activeElement : $('readerPanelMinimize'));
       panelPointerFocus = null;
       current.panelScrollTop = panel.scrollTop;
-      panel.hidden = true;
+      panel.classList.add('is-minimized');
+      panelContent.querySelector('.reader-panel-details')?.setAttribute('inert', '');
+      panelContent.querySelector('.reader-panel-rail')?.removeAttribute('inert');
       $('readerPanelRestore').hidden = false;
+      $('readerPanelMinimize').hidden = true;
       $('readerPanelRestore').focus();
     } else {
-      panel.hidden = false;
+      panel.classList.remove('is-minimized');
+      panelContent.querySelector('.reader-panel-details')?.removeAttribute('inert');
+      panelContent.querySelector('.reader-panel-rail')?.setAttribute('inert', '');
       $('readerPanelRestore').hidden = true;
+      $('readerPanelMinimize').hidden = false;
       (panelReturnFocus?.isConnected ? panelReturnFocus : $('readerPanelMinimize')).focus({preventScroll: true});
       panel.scrollTop = current.panelScrollTop || 0;
       requestAnimationFrame(() => { if (current) panel.scrollTop = current.panelScrollTop || 0; });
@@ -229,6 +240,7 @@
     body.replaceChildren();
     $('readerToc').hidden = true;
     controls.forEach(control => control.hidden = true);
+    $('readerZoom').hidden = true;
     const wording = {source_missing: 'Source missing', rendering_error: 'Rendering error', unsupported_content: 'Unsupported content'};
     $('readerError').textContent = `${wording[kind] || 'Reader error'}: ${message} Use Close to return to the library.`;
     $('readerError').hidden = false;
@@ -238,12 +250,19 @@
     if (current) close();
     const token = ++generation;
     current = {id: documentItem.id, documentItem, opener, bookshelfId, scrollY: window.scrollY, content: null, pending: null, opened: false, zoom: 1};
+    body.style.setProperty('--reader-zoom', 1);
+    zoomField.value = '100';
     document.body.classList.add('reader-open');
     overlay.hidden = false; body.replaceChildren(); $('readerError').hidden = true;
-    panel.hidden = false; $('readerPanelRestore').hidden = true;
+    panel.classList.toggle('is-minimized', panelMinimized);
+    $('readerPanelRestore').hidden = !panelMinimized;
+    $('readerPanelMinimize').hidden = panelMinimized;
     panel.scrollTop = 0; panelReturnFocus = null; panelErrorNode.hidden = true;
     panelContent.replaceChildren(window.tomeshedCatalog.renderDocumentInfo(documentItem));
+    panelContent.querySelector('.reader-panel-details')?.toggleAttribute('inert', panelMinimized);
+    panelContent.querySelector('.reader-panel-rail')?.toggleAttribute('inert', !panelMinimized);
     $('readerToc').hidden = true; controls.forEach(control => control.hidden = false);
+    $('readerZoom').hidden = false;
     $('readerTitle').textContent = documentItem.title;
     status.textContent = 'Opening…';
     $('readerClose').focus();
@@ -272,7 +291,6 @@
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
       if (token !== generation || $('readerError').hidden === false) return;
-      $('readerFinished').textContent = progress.completed ? 'Finished' : 'Mark finished';
       current.opened = true;
       restore(progress.position);
       current.openPromise = fetch(endpoint('reader-open'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(current.bookshelfId ? {bookshelf_id: current.bookshelfId} : {}), credentials: 'same-origin'}).then(async response => {
@@ -310,12 +328,22 @@
     else index = nodes.findIndex(node => node.dataset.locator === position.locator.element);
     jump(nodes[clamp(index + direction, 0, nodes.length - 1)]);
   }
-  function zoom(direction) {
+  function setZoom(value) {
     if (!current?.opened) return;
     const saved = positionNow();
-    current.zoom = clamp(current.zoom + direction * .15, .65, 2.5);
+    current.zoom = clamp(Math.round(value * 10000) / 10000, .65, 2.5);
     body.style.setProperty('--reader-zoom', current.zoom);
+    zoomField.value = String(Number((current.zoom * 100).toFixed(2)));
     restore(saved);
+  }
+  function applyZoomField() {
+    if (!current?.opened) return;
+    const value = zoomField.value.trim();
+    if (/^\d+(?:\.\d+)?$/.test(value) && Number(value) >= 65 && Number(value) <= 250) {
+      setZoom(Number(value) / 100);
+    } else {
+      zoomField.value = String(Number((current.zoom * 100).toFixed(2)));
+    }
   }
   $('readerClose').addEventListener('click', close);
   $('readerPanelMinimize').addEventListener('pointerdown', () => {
@@ -325,39 +353,12 @@
   $('readerPanelRestore').addEventListener('click', () => setPanelMinimized(false));
   $('readerPrevious').addEventListener('click', () => navigate(-1));
   $('readerNext').addEventListener('click', () => navigate(1));
-  $('readerZoomOut').addEventListener('click', () => zoom(-1));
-  $('readerZoomIn').addEventListener('click', () => zoom(1));
-  $('readerFinished').addEventListener('click', async () => {
-    if (!current?.opened) return;
-    const owner = current;
-    await owner.openPromise;
-    if (current !== owner) return;
-    flushSave(); await writeQueue;
-    if (current !== owner) return;
-    const response = await fetch(endpoint('finish'), {method: 'POST'});
-    if (response.ok && current === owner) {
-      const updated = {...owner.documentItem, reading_state: 'finished'};
-      updateReadingState(updated);
-      $('readerFinished').textContent = 'Finished';
-      window.tomeshedCatalog?.readerState(owner.id, updated);
-    }
+  $('readerZoomOut').addEventListener('click', () => setZoom(current.zoom - .15));
+  $('readerZoomIn').addEventListener('click', () => setZoom(current.zoom + .15));
+  zoomField.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); applyZoomField(); zoomField.blur(); }
   });
-  $('readerStartOver').addEventListener('click', async () => {
-    if (!current?.opened) return;
-    const owner = current;
-    await owner.openPromise;
-    if (current !== owner) return;
-    clearTimeout(timer); current.pending = null; await writeQueue;
-    if (current !== owner) return;
-    const response = await fetch(endpoint('start-over'), {method: 'POST'});
-    if (response.ok && current === owner) {
-      const updated = {...owner.documentItem, reading_state: 'in_progress'};
-      updateReadingState(updated);
-      $('readerFinished').textContent = 'Mark finished';
-      scroller.scrollTop = 0; label(positionNow());
-      window.tomeshedCatalog?.readerState(owner.id, updated);
-    }
-  });
+  zoomField.addEventListener('change', applyZoomField);
   scroller.addEventListener('scroll', () => {
     if (current?.opened && Date.now() < (current.suppressUntil || 0)) {
       clearTimeout(current.suppressedScrollTimer);
