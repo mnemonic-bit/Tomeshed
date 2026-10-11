@@ -1,6 +1,6 @@
 # Bug 0012 — Bookshelves are isolated above document results
 
-**Status:** Open
+**Status:** Resolved in `0.2.8`
 
 ## Observed behavior
 
@@ -18,10 +18,10 @@ Show accessible owned and shared bookshelves as cards in the same main result gr
 
 `templates/index.html` has a separate `bookshelfArea`, `static/bookshelves.js` renders its own lists, and `organization_service.py` paginates documents alone. Feature 0007 explicitly specified separate sections and excluded bookshelf cards from page slots; its library-view and AC-04 text will need revision for this request.
 
-## Proposed resolution
+## Resolution
 
-Build one authorized result model for document and bookshelf cards. Apply search, scope, sorting, and total-count calculation before pagination. Keep the existing bookshelf detail and sharing authorization rules. Use the Filters popover as the primary scope control. As a later search convenience, `shelf:yes` and `shelf:no` may map to the same scope state, following VDL's `playlists:yes` syntax; if added, parse them as operators rather than literal document text and show the interpreted scope in the UI.
+`/api/documents` now returns authorized document and bookshelf items in one sorted result page. The catalog applies search, scope, document filters, sorting, and total-count calculation before pagination. Bookshelf previews use the existing viewer-specific detail projection, so private members are omitted from shared counts and covers. The browser renders both item types in the main grid and offers `All`, `Documents only`, and `Only bookshelves` in the Filters popover. The separate bookshelf lists were removed. An owned bookshelf's detail dialog shows `Arrange bookshelves` in saved position order with keyboard-accessible move controls; shared recipients do not see that manager. The mixed grid continues to follow catalog sorting after a move. Editing, sharing, and reading remain available through the bookshelf detail dialog.
 
 ## Verification
 
-**not_run** — Documentation only. Check mixed, document-only, and bookshelf-only results with two users, private members, search matches, and more items than one page. Confirm no duplicate bookshelf section and no access leak.
+**passed** — `.venv/bin/python -m pytest -q` completed with 65 passed, including mixed pages, owned and shared shelves, scope, search, sort order, and private member omission. `.venv/bin/python tests/browser_check_bookshelves.py` passed its 17 browser checks, including the owner's saved arrangement before and after reload, a keyboard move, a shared recipient without arrangement controls, and unchanged grid sort. `.venv/bin/python tests/browser_check_organization.py` and `.venv/bin/python tests/browser_check_filters_popover.py` passed their catalog and filter checks. `node --check static/app.js` and `node --check static/bookshelves.js` exited with code 0.

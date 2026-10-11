@@ -57,6 +57,72 @@ def check_geometry(page):
     return result
 
 
+def check_hover_dwell(page, pdf, pdf_id):
+    bubble = page.locator('#previewBubble')
+    thumbnail = pdf.locator('.document-preview')
+    requests = []
+    endpoint = f'/api/documents/{pdf_id}/preview'
+    page.on('request', lambda request: requests.append(request.url) if request.url.endswith(endpoint) else None)
+
+    page.mouse.move(0, 0)
+    thumbnail.hover()
+    page.wait_for_timeout(250)
+    assert not bubble.is_visible() and not requests, 'Preview opened before 800 ms'
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(850)
+    assert not bubble.is_visible() and not requests, 'Preview opened after pointer exit'
+
+    thumbnail.hover()
+    page.wait_for_timeout(250)
+    pdf.evaluate('(card) => card.hidden = true')
+    page.wait_for_timeout(850)
+    assert not bubble.is_visible() and not requests, 'Hidden card opened preview'
+    pdf.evaluate('(card) => card.hidden = false')
+    page.mouse.move(0, 0)
+
+    thumbnail.hover()
+    page.wait_for_timeout(250)
+    page.mouse.down()
+    page.wait_for_timeout(850)
+    assert not bubble.is_visible() and not requests, 'Drag opened preview'
+    page.mouse.move(0, 0)
+    page.mouse.up()
+
+    thumbnail.hover()
+    page.wait_for_timeout(250)
+    pdf.locator('.document-open').evaluate("(button) => button.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))")
+    page.locator('#reader').wait_for(state='visible')
+    page.wait_for_timeout(850)
+    assert not bubble.is_visible() and not requests, 'Reader open left preview pending'
+    page.locator('#readerClose').click()
+    page.locator('#reader').wait_for(state='hidden')
+    page.locator('#librarySearch').focus()
+    page.mouse.move(0, 0)
+
+    thumbnail.evaluate('''(element, endpoint) => {
+      window.previewHoverStart = null;
+      window.previewFetchDelay = null;
+      element.addEventListener('pointermove', () => { window.previewHoverStart = performance.now(); }, {once: true, capture: true});
+      window.previewOriginalFetch = window.fetch;
+      window.fetch = (...args) => {
+        if (String(args[0]).endsWith(endpoint)) window.previewFetchDelay = performance.now() - window.previewHoverStart;
+        return window.previewOriginalFetch(...args);
+      };
+    }''', endpoint)
+    thumbnail.hover()
+    page.wait_for_timeout(500)
+    box = thumbnail.bounding_box()
+    page.mouse.move(box['x'] + box['width'] * .6, box['y'] + box['height'] * .6)
+    page.wait_for_timeout(200)
+    assert not bubble.is_visible() and not requests, 'Movement shortened dwell'
+    bubble.wait_for(state='visible', timeout=350)
+    assert len(requests) == 1, f'Expected one initial preview request, got {len(requests)}'
+    assert page.evaluate('window.previewFetchDelay >= 800'), 'Preview request started before 800 ms'
+    page.evaluate('window.fetch = window.previewOriginalFetch')
+    page.mouse.move(0, 0)
+    bubble.wait_for(state='hidden')
+
+
 def main():
     checks = {}
     with tempfile.TemporaryDirectory() as temporary:
@@ -81,6 +147,7 @@ def main():
                 page.get_by_role('button', name='Set password and open library').click()
                 page.wait_for_url(base + '/')
                 page.wait_for_function('document.querySelectorAll(".document-card").length >= 8')
+                assert page.locator('.document-preview-action').count() == 0, 'Cards still show Preview buttons'
                 progress_writes = []
                 page.on('request', lambda req: progress_writes.append(req.url) if req.method == 'PUT' and req.url.endswith('/progress') else None)
                 position = {'locator': {'page': 3, 'offset': .2}, 'percent': 60}
@@ -88,6 +155,8 @@ def main():
                     conn.execute('INSERT INTO reading_positions(user_id,document_id,locator_json,percent,completed,updated_at) VALUES (1,?,?,?,?,?)',
                                  (pdf_id, json.dumps(position['locator']), position['percent'], 1, time.time()))
                 pdf = card(page, 'Preview PDF')
+                check_hover_dwell(page, pdf, pdf_id)
+                checks['hover_dwell'] = 'passed'
                 pdf.locator('.document-preview').hover()
                 page.locator('#previewBubble').wait_for(state='visible')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
@@ -118,7 +187,7 @@ def main():
                 assert not progress_writes
                 page.mouse.move(0, 0)
                 page.locator('#previewBubble').wait_for(state='hidden')
-                pdf.locator('.document-open').click()
+                pdf.locator('.document-open').dblclick()
                 page.locator('#reader').wait_for(state='visible')
                 page.wait_for_function('document.querySelector("#readerPosition").textContent.includes("Page 3")')
                 assert not page.locator('#previewBubble').is_visible()
@@ -136,8 +205,11 @@ def main():
                 checks['warning_preserved_source'] = 'passed'
 
                 epub = card(page, 'Preview EPUB')
-                epub.get_by_role('button', name='Preview Preview EPUB').focus()
-                page.keyboard.press('Enter')
+                page.keyboard.press('Tab')
+                epub.locator('.document-open').focus()
+                assert epub.locator('.document-open').evaluate("e => e.matches(':focus-visible')")
+                page.wait_for_timeout(250)
+                assert not page.locator('#previewBubble').is_visible(), 'Keyboard focus opened preview before 800 ms'
                 page.locator('#previewBubble').wait_for(state='visible')
                 assert page.locator('#previewClose').evaluate('e => document.activeElement === e')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.startsWith("Location 1 of ")')
@@ -154,7 +226,9 @@ def main():
                 assert page.locator('#previewNext').is_disabled()
                 page.keyboard.press('Escape')
                 assert not page.locator('#previewBubble').is_visible()
-                assert epub.locator('.document-preview-action').evaluate('e => document.activeElement === e')
+                assert epub.locator('.document-open').evaluate('e => document.activeElement === e')
+                page.wait_for_timeout(850)
+                assert not page.locator('#previewBubble').is_visible(), 'Restored focus reopened preview'
                 assert page.evaluate(f'''async () => await (await fetch('/api/documents/{epub_id}/progress')).json()''') == {'position': None, 'completed': False}
                 assert not progress_writes
                 epub_saved = {'locator': {'section': 'OPS/second.xhtml', 'element': 2, 'offset': .1}, 'percent': 80}
@@ -192,7 +266,7 @@ def main():
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Page 3")')
                 page.evaluate("window.oldPreviewImage = document.querySelector('#previewContent img')")
                 page.evaluate(f'''() => {{const card=document.querySelector('.document-card[data-document-id="{docling_id}"]');
-                  window.tomeshedPreview.open('{docling_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-preview-action'),true);}}''')
+                  window.tomeshedPreview.open('{docling_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-open'),true);}}''')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2")')
                 page.evaluate("window.oldPreviewImage.dispatchEvent(new Event('error'))")
                 assert 'Preview unavailable' not in page.locator('#previewContent').inner_text()
@@ -203,7 +277,7 @@ def main():
                 page.route(f'**/api/documents/{pdf_id}/preview', lambda route: route.fulfill(status=503, body='unavailable'))
                 pdf.locator('.document-preview').hover()
                 page.wait_for_function('document.querySelector("#previewContent").textContent.includes("Preview unavailable")')
-                pdf.locator('.document-open').click()
+                pdf.locator('.document-open').dblclick()
                 page.locator('#reader').wait_for(state='visible')
                 page.locator('#readerClose').click()
                 page.unroute(f'**/api/documents/{pdf_id}/preview')
@@ -217,7 +291,7 @@ def main():
                 }}; }}''')
                 pdf.locator('.document-preview').hover()
                 page.evaluate(f'''() => {{const card=document.querySelector('.document-card[data-document-id="{epub_id}"]');
-                  window.tomeshedPreview.open('{epub_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-preview-action'),true);}}''')
+                  window.tomeshedPreview.open('{epub_id}',card,card.querySelector('.document-preview'),card.querySelector('.document-open'),true);}}''')
                 page.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 2 of 3")')
                 page.wait_for_timeout(600)
                 assert page.locator('#previewPosition').inner_text().startswith('Location 2 of 3')
@@ -265,12 +339,35 @@ def main():
                 touch.add_cookies(context.cookies())
                 phone = touch.new_page(); phone.goto(base + '/')
                 phone.wait_for_function('document.querySelectorAll(".document-card").length >= 8')
-                phone.get_by_role('button', name='Preview Preview EPUB').tap()
+                phone_cover = card(phone, 'Preview EPUB').locator('.document-open')
+                assert phone_cover.get_attribute('aria-controls') == 'previewBubble'
+                assert phone_cover.get_attribute('aria-expanded') == 'false'
+                phone_cover.scroll_into_view_if_needed()
+                box = phone_cover.bounding_box()
+                assert box['y'] >= 0 and box['y'] + box['height'] <= 800, box
+                x = box['x'] + box['width'] / 2; y = box['y'] + box['height'] / 2
+                cdp = touch.new_cdp_session(phone)
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y}]})
+                phone.wait_for_timeout(250)
+                assert not phone.locator('#previewBubble').is_visible(), 'Touch opened preview before 800 ms'
                 phone.locator('#previewBubble').wait_for(state='visible')
+                assert phone_cover.get_attribute('aria-expanded') == 'true'
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+                assert not phone.locator('#reader').is_visible(), 'Touch hold opened the reader'
+                assert phone.locator('.document-selection-badge').count() == 0, 'Touch hold selected a document'
                 phone.locator('#previewNext').tap()
                 phone.wait_for_function('document.querySelector("#previewPosition").textContent.includes("Location 3")')
                 phone.locator('#previewClose').tap()
                 assert not phone.locator('#previewBubble').is_visible()
+                assert phone_cover.get_attribute('aria-expanded') == 'false'
+                assert phone_cover.evaluate('e => document.activeElement === e'), 'Touch close did not restore thumbnail focus'
+                assert phone.evaluate(f'''async () => await (await fetch('/api/documents/{epub_id}/progress')).json()''')['position'] == epub_saved
+                phone_cover.tap()
+                assert not phone.locator('#reader').is_visible(), 'Short tap opened the reader'
+                card(phone, 'Preview EPUB').locator('.document-selected-open').tap()
+                phone.locator('#reader').wait_for(state='visible')
+                assert not phone.locator('#previewBubble').is_visible(), 'Short tap left the preview open'
+                phone.locator('#readerClose').tap()
                 checks['touch'] = 'passed'
                 touch.close(); browser.close()
         finally:

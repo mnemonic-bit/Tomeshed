@@ -25,7 +25,7 @@ app.config.update(
     MAX_UPLOAD_BYTES=int(os.environ.get("TOMESHED_MAX_UPLOAD_BYTES", 100 * 1024 * 1024)),
     CONVERSION_TIMEOUT=int(os.environ.get("TOMESHED_CONVERSION_TIMEOUT", 180)),
     CONVERSION_WORKERS=int(os.environ.get("TOMESHED_CONVERSION_WORKERS", 2)),
-    CATALOG_PAGE_SIZE=int(os.environ.get("TOMESHED_CATALOG_PAGE_SIZE", 24)),
+    CATALOG_PAGE_SIZE=int(os.environ.get("TOMESHED_CATALOG_PAGE_SIZE", 50)),
     PREVIEW_CACHE_LOCATIONS=int(os.environ.get("TOMESHED_PREVIEW_CACHE_LOCATIONS", 32)),
     PREVIEW_PDF_MAX_WIDTH=int(os.environ.get("TOMESHED_PREVIEW_PDF_MAX_WIDTH", 720)),
     PREVIEW_PDF_MAX_HEIGHT=int(os.environ.get("TOMESHED_PREVIEW_PDF_MAX_HEIGHT", 960)),
@@ -76,9 +76,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS preferences (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 theme TEXT NOT NULL DEFAULT 'system'
-                    CHECK (theme IN ('light', 'dark', 'system'))
+                    CHECK (theme IN ('light', 'dark', 'system')),
+                page_size TEXT NOT NULL DEFAULT '10'
+                    CHECK (page_size IN ('5', '10', '20', '50', 'endless'))
             );
         """)
+        if "page_size" not in {row[1] for row in conn.execute("PRAGMA table_info(preferences)")}:
+            conn.execute("""ALTER TABLE preferences ADD COLUMN page_size TEXT NOT NULL DEFAULT '10'
+                            CHECK (page_size IN ('5', '10', '20', '50', 'endless'))""")
         for role in ("normal", "admin"):
             conn.execute("INSERT OR IGNORE INTO roles(name) VALUES (?)", (role,))
         count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -255,16 +260,25 @@ def preferences():
     with db() as conn:
         if request.method == "PATCH":
             data = request.get_json(silent=True)
-            if not isinstance(data, dict) or data.get("theme") not in ("light", "dark", "system"):
+            if not isinstance(data, dict) or not data or any(key not in ("theme", "page_size") for key in data):
+                return error("Choose a theme or items per page.")
+            if "theme" in data and data["theme"] not in ("light", "dark", "system"):
                 return error("Choose light, dark, or system.")
+            if "page_size" in data and data["page_size"] not in ("5", "10", "20", "50", "endless"):
+                return error("Choose 5, 10, 20, 50, or endless scrolling.")
             conn.execute("""
-                INSERT INTO preferences(user_id, theme) VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET theme = excluded.theme
-            """, (g.current_user["id"], data["theme"]))
+                INSERT OR IGNORE INTO preferences(user_id) VALUES (?)
+            """, (g.current_user["id"],))
+            if "theme" in data:
+                conn.execute("UPDATE preferences SET theme = ? WHERE user_id = ?",
+                             (data["theme"], g.current_user["id"]))
+            if "page_size" in data:
+                conn.execute("UPDATE preferences SET page_size = ? WHERE user_id = ?",
+                             (data["page_size"], g.current_user["id"]))
         row = conn.execute(
-            "SELECT theme FROM preferences WHERE user_id = ?", (g.current_user["id"],)
+            "SELECT theme, page_size FROM preferences WHERE user_id = ?", (g.current_user["id"],)
         ).fetchone()
-        return jsonify(theme=row["theme"] if row else "system")
+        return jsonify(theme=row["theme"] if row else "system", page_size=row["page_size"] if row else "10")
 
 
 def require_admin():

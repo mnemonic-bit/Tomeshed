@@ -4,6 +4,9 @@
   const scroller = $('readerScroll');
   const body = $('readerContent');
   const status = $('readerPosition');
+  const panel = $('readerDocumentPanel');
+  const panelContent = $('readerPanelContent');
+  const panelErrorNode = $('readerPanelError');
   const controls = ['readerPrevious', 'readerNext', 'readerZoomOut', 'readerZoomIn', 'readerFinished', 'readerStartOver'].map($);
   let current = null;
   let generation = 0;
@@ -11,6 +14,59 @@
   let writeQueue = Promise.resolve();
   let scrollFrame = 0;
   let skipScroll = false;
+  let panelReturnFocus = null;
+  let panelPointerFocus = null;
+
+  function isOpenFor(id) { return Boolean(current && current.id === id && !overlay.hidden); }
+  function panelError(id, message) {
+    if (!isOpenFor(id)) return;
+    panelErrorNode.textContent = message;
+    panelErrorNode.hidden = false;
+  }
+  function updateDocument(item) {
+    if (!item || !isOpenFor(item.id)) return;
+    current.documentItem = item;
+    const scrollTop = panel.scrollTop;
+    const active = panel.contains(document.activeElement) ? document.activeElement : null;
+    const name = active?.getAttribute('name');
+    const label = active?.getAttribute('aria-label') || active?.textContent;
+    panelContent.replaceChildren(window.tomeshedCatalog.renderDocumentInfo(item));
+    panel.scrollTop = scrollTop;
+    $('readerTitle').textContent = item.title;
+    panelErrorNode.hidden = true;
+    if (active && !panel.hidden) {
+      const next = (name && panel.querySelector(`[name="${CSS.escape(name)}"]`)) ||
+        [...panel.querySelectorAll('button, input, select, a')].find(node => (node.getAttribute('aria-label') || node.textContent) === label);
+      (next || $('readerPanelMinimize')).focus({preventScroll: true});
+    }
+  }
+  function updateReadingState(item) {
+    if (!item || !isOpenFor(item.id)) return;
+    current.documentItem = {...current.documentItem, ...item};
+    const state = panelContent.querySelector('[data-reader-field="reading-state"] span');
+    const lastRead = panelContent.querySelector('[data-reader-field="last-read"] span');
+    if (state) state.textContent = current.documentItem.reading_state.replace('_', ' ');
+    if (lastRead) lastRead.textContent = current.documentItem.last_read_at
+      ? new Date(current.documentItem.last_read_at * 1000).toLocaleString() : 'Never';
+  }
+  function setPanelMinimized(minimized) {
+    const position = current?.opened ? positionNow() : null;
+    if (minimized) {
+      panelReturnFocus = panelPointerFocus || (panel.contains(document.activeElement) ? document.activeElement : $('readerPanelMinimize'));
+      panelPointerFocus = null;
+      current.panelScrollTop = panel.scrollTop;
+      panel.hidden = true;
+      $('readerPanelRestore').hidden = false;
+      $('readerPanelRestore').focus();
+    } else {
+      panel.hidden = false;
+      $('readerPanelRestore').hidden = true;
+      (panelReturnFocus?.isConnected ? panelReturnFocus : $('readerPanelMinimize')).focus({preventScroll: true});
+      panel.scrollTop = current.panelScrollTop || 0;
+      requestAnimationFrame(() => { if (current) panel.scrollTop = current.panelScrollTop || 0; });
+    }
+    if (position) requestAnimationFrame(() => { if (current?.opened) restore(position); });
+  }
 
   function endpoint(suffix) { return `/api/documents/${encodeURIComponent(current.id)}/${suffix}`; }
   function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
@@ -181,9 +237,12 @@
   async function open(documentItem, opener, bookshelfId = null) {
     if (current) close();
     const token = ++generation;
-    current = {id: documentItem.id, opener, bookshelfId, scrollY: window.scrollY, content: null, pending: null, opened: false, zoom: 1};
+    current = {id: documentItem.id, documentItem, opener, bookshelfId, scrollY: window.scrollY, content: null, pending: null, opened: false, zoom: 1};
     document.body.classList.add('reader-open');
     overlay.hidden = false; body.replaceChildren(); $('readerError').hidden = true;
+    panel.hidden = false; $('readerPanelRestore').hidden = true;
+    panel.scrollTop = 0; panelReturnFocus = null; panelErrorNode.hidden = true;
+    panelContent.replaceChildren(window.tomeshedCatalog.renderDocumentInfo(documentItem));
     $('readerToc').hidden = true; controls.forEach(control => control.hidden = false);
     $('readerTitle').textContent = documentItem.title;
     status.textContent = 'Opening…';
@@ -219,7 +278,10 @@
       current.openPromise = fetch(endpoint('reader-open'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(current.bookshelfId ? {bookshelf_id: current.bookshelfId} : {}), credentials: 'same-origin'}).then(async response => {
         if (!response.ok) throw new Error(`Reader open could not be recorded (${response.status})`);
         const result = await response.json();
-        if (token === generation) window.tomeshedCatalog?.readerState(current.id, result.document);
+        if (token === generation) {
+          updateReadingState(result.document);
+          window.tomeshedCatalog?.readerState(current.id, result.document);
+        }
         if (token === generation) window.tomeshedBookshelves?.refresh();
       }).catch(error => { if (token === generation) status.textContent = error.message; });
     } catch (error) {
@@ -256,23 +318,45 @@
     restore(saved);
   }
   $('readerClose').addEventListener('click', close);
+  $('readerPanelMinimize').addEventListener('pointerdown', () => {
+    panelPointerFocus = panel.contains(document.activeElement) ? document.activeElement : null;
+  });
+  $('readerPanelMinimize').addEventListener('click', () => setPanelMinimized(true));
+  $('readerPanelRestore').addEventListener('click', () => setPanelMinimized(false));
   $('readerPrevious').addEventListener('click', () => navigate(-1));
   $('readerNext').addEventListener('click', () => navigate(1));
   $('readerZoomOut').addEventListener('click', () => zoom(-1));
   $('readerZoomIn').addEventListener('click', () => zoom(1));
   $('readerFinished').addEventListener('click', async () => {
     if (!current?.opened) return;
-    await current.openPromise;
+    const owner = current;
+    await owner.openPromise;
+    if (current !== owner) return;
     flushSave(); await writeQueue;
+    if (current !== owner) return;
     const response = await fetch(endpoint('finish'), {method: 'POST'});
-    if (response.ok) { $('readerFinished').textContent = 'Finished'; window.tomeshedCatalog?.readerState(current.id); }
+    if (response.ok && current === owner) {
+      const updated = {...owner.documentItem, reading_state: 'finished'};
+      updateReadingState(updated);
+      $('readerFinished').textContent = 'Finished';
+      window.tomeshedCatalog?.readerState(owner.id, updated);
+    }
   });
   $('readerStartOver').addEventListener('click', async () => {
     if (!current?.opened) return;
-    await current.openPromise;
+    const owner = current;
+    await owner.openPromise;
+    if (current !== owner) return;
     clearTimeout(timer); current.pending = null; await writeQueue;
+    if (current !== owner) return;
     const response = await fetch(endpoint('start-over'), {method: 'POST'});
-    if (response.ok) { $('readerFinished').textContent = 'Mark finished'; scroller.scrollTop = 0; label(positionNow()); window.tomeshedCatalog?.readerState(current.id); }
+    if (response.ok && current === owner) {
+      const updated = {...owner.documentItem, reading_state: 'in_progress'};
+      updateReadingState(updated);
+      $('readerFinished').textContent = 'Mark finished';
+      scroller.scrollTop = 0; label(positionNow());
+      window.tomeshedCatalog?.readerState(owner.id, updated);
+    }
   });
   scroller.addEventListener('scroll', () => {
     if (current?.opened && Date.now() < (current.suppressUntil || 0)) {
@@ -287,10 +371,10 @@
     scrollFrame = requestAnimationFrame(scheduleSave);
   }, {passive: true});
   document.addEventListener('keydown', event => {
-    if (overlay.hidden) return;
+    if (overlay.hidden || $('bookshelfDialog').open) return;
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key === 'Tab') {
-      const focusable = [...overlay.querySelectorAll('button, a[href], [tabindex="0"]')]
+      const focusable = [...overlay.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')]
         .filter(node => !node.hidden && !node.disabled && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
       if (!focusable.length) return;
       const index = focusable.indexOf(document.activeElement);
@@ -301,8 +385,8 @@
     }
   });
   document.addEventListener('focusin', event => {
-    if (!overlay.hidden && !overlay.contains(event.target)) $('readerClose').focus();
+    if (!overlay.hidden && !$('bookshelfDialog').open && !overlay.contains(event.target)) $('readerClose').focus();
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { captureLatestMovement(); flushSave(); } });
-  window.tomeshedReader = {open, close};
+  window.tomeshedReader = {open, close, isOpenFor, updateDocument, panelError};
 })();

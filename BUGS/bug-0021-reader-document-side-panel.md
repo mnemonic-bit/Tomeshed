@@ -1,6 +1,6 @@
 # Bug 0021 — Document Info popover belongs in the reader's left panel
 
-**Status:** Open
+**Status:** Resolved in `0.2.17`
 
 ## Observed behavior
 
@@ -18,10 +18,12 @@ Remove the card's three-dot button and Info popover. When a user double-clicks t
 
 `static/app.js` builds `.document-info` inside each card and `static/styles.css` caps its width at 280 px. `templates/index.html` and `static/reader.js` define a reader overlay without a document-side panel. The current Info actions have separate mutation and authorization rules that the new panel must retain.
 
-## Proposed resolution
+## Resolution
 
-Build the document-side panel as part of the reader overlay and populate it from the opened document's authorized metadata. Move the existing Info actions and Add to bookshelf into that panel. Refresh the panel after successful mutations and show failures without closing the reader. Keep the reader's page, chapter, zoom, and progress controls usable while the panel is expanded or minimized. Revise feature checks that require the old three-dot Info control.
+The reader now contains a 560 px desktop document panel beside the reading area. On narrow viewports, the panel sits above a visible reading area. The panel contains the former Info metadata and actions, plus `Add to bookshelf`. The card's three-dot control and card-level bookshelf action have been removed. Minimize hides the panel content in place and exposes a restore control, preserving the panel's form values, focus target, and scroll position. Reader open, Mark finished, and Start over update the panel's reading state and last-read values in place without replacing unsaved form input. Successful document mutations refresh the panel; failures appear inside it while the reader stays open. Confirmed removal closes the reader and reports success in the library. The bookshelf chooser can receive focus while opened from the reader.
 
 ## Verification
 
-**not_run** — Documentation only. Check every moved field and action for an administrator and a normal user; verify panel width, minimize and restore behavior, form state, reader resizing, keyboard focus, and mobile layout. Confirm failed mutations and document removal produce clear feedback.
+**passed** — `.venv/bin/python tests/browser_check_reader_panel.py` was red before the change on the card Info button and passed after the change. A review check then found stale reading-state fields; the expanded check was red on `unread` after reader open and now passes. It checks open, finish, and start-over fields while preserving form input, focus, and panel scroll; desktop width; administrator and normal-user controls; mobile reader space; minimize and restore state; and failed and successful metadata saves.
+
+**passed** — `.venv/bin/python tests/browser_check_documents.py`, `.venv/bin/python tests/browser_check_organization.py`, `.venv/bin/python tests/browser_check_file_workflows.py`, `.venv/bin/python tests/browser_check_bookshelves.py`, and `.venv/bin/python tests/browser_check_reader.py` pass. These checks cover retry indexing, tags, file export and rename, removal, bookshelf selection, and reader controls.

@@ -1,6 +1,6 @@
 # Bug 0017 — Document cards expose an unnecessary Preview button
 
-**Status:** Open
+**Status:** Resolved in `0.2.15`
 
 ## Observed behavior
 
@@ -22,6 +22,16 @@ Remove the Preview button from document cards. Pointer hover must still open the
 
 Remove the per-card button and give the preview controller the thumbnail as its expanded-state and focus-return anchor. Prevent the touch press-and-hold gesture from also selecting or opening the document.
 
+## Resolution
+
+Removed the card's `Preview` button. The thumbnail now carries `aria-controls` and `aria-expanded`. Keyboard focus and touch press-and-hold open the preview after 800 ms; a short tap opens the reader. Closing a preview opened by keyboard or touch returns focus to the thumbnail without reopening the preview. Updated Feature 0004 and the browser checks for the thumbnail interaction.
+
 ## Verification
 
-**not_run** — Documentation only. Check that no card shows Preview; mouse hover, keyboard, and touch can still open and close a preview; focus returns to the trigger; no preview interaction changes saved progress.
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_preview.py` checked that cards have no separate `Preview` button, mouse hover, keyboard focus, and touch hold open and close the bubble, focus returns to the thumbnail, a short tap opens the reader, and preview interactions leave saved progress unchanged.
+
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_organization.py` checked that preview leaves reading state and progress unchanged alongside the organization flows.
+
+**passed** — `PYTHONPATH=. .venv/bin/pytest -q` completed with 70 passed tests.
+
+**passed** — `node --check static/app.js`, `node --check static/preview.js`, and `git diff --check` completed without errors.

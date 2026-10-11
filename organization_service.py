@@ -130,13 +130,16 @@ class OrganizationService:
         favorite = args.get("favorite", "")
         state = args.get("reading_state", "")
         mode = args.get("tag_mode", "ALL").upper()
-        sort = args.get("sort", "newest")
+        sort = args.get("sort", "date_added")
+        direction = args.get("direction", "desc" if sort in ("date_added", "newest", "favorite") else "asc")
+        if sort == "newest":
+            sort = "date_added"
         tags = [normalize_tag(tag)[1] for tag in args.getlist("tag")]
-        if source not in ("", "pdf", "epub", "docling") or favorite not in ("", "true", "false") or state not in ("", "unread", "in_progress", "finished") or mode not in ("ALL", "ANY") or sort not in ("newest", "favorite"):
+        if source not in ("", "pdf", "epub", "docling") or favorite not in ("", "true", "false") or state not in ("", "unread", "in_progress", "finished") or mode not in ("ALL", "ANY") or sort not in ("date_added", "title", "author", "type", "favorite") or direction not in ("asc", "desc"):
             raise ValueError("Invalid catalog filter")
         if len(tags) > 30:
             raise ValueError("Too many selected tags")
-        return source, author, favorite, state, mode, sort, set(tags)
+        return source, author, favorite, state, mode, sort, direction, set(tags)
 
     def catalog(self):
         try:
@@ -144,7 +147,10 @@ class OrganizationService:
             requested = int(request.args.get("limit", self.app.config["CATALOG_PAGE_SIZE"]))
             if offset < 0 or requested < 1:
                 raise ValueError("Invalid catalog page")
-            source, author, favorite, state, mode, sort, tags = self._filter_params()
+            source, author, favorite, state, mode, sort, direction, tags = self._filter_params()
+            scope = request.args.get("scope", "all")
+            if scope not in ("all", "documents", "bookshelves"):
+                raise ValueError("Invalid catalog scope")
         except (ValueError, TypeError) as exc:
             return jsonify(error=str(exc)), 400
         limit = min(requested, max(1, int(self.app.config["CATALOG_PAGE_SIZE"])))
@@ -152,8 +158,9 @@ class OrganizationService:
         user_id = g.current_user["id"]
         with self.db() as conn:
             all_rows = [row for row in conn.execute("SELECT * FROM documents") if self.library.can_access_document(row, user_id)]
-            results = []
-            for row in all_rows:
+            documents = []
+            document_rows = all_rows if scope != "bookshelves" else ()
+            for row in document_rows:
                 public = self.public_document(row, user_id, conn)
                 if query and not any(query in str(value).casefold() for value in (public["title"], public["author"], row["original_filename"], row["text_content"])):
                     continue
@@ -168,11 +175,33 @@ class OrganizationService:
                 names = {name.casefold() for name in public["tags"]}
                 if tags and not (tags <= names if mode == "ALL" else bool(tags & names)):
                     continue
-                results.append(public)
-            results.sort(key=lambda item: (item["created_at"], item["id"]), reverse=True)
-            if sort == "favorite":
-                results.sort(key=lambda item: item["favorite"], reverse=True)
-            return jsonify(documents=results[offset:offset + limit], total=len(results), library_total=len(all_rows), offset=offset, limit=limit, available_tags=self.suggestions(conn, user_id))
+                documents.append(public | {"kind": "document"})
+            shelves = []
+            if scope != "documents" and not (source or author or favorite or state or tags):
+                shelves = [item for item in self.library.bookshelves.catalog_items(conn, user_id)
+                           if not query or query in item["name"].casefold()]
+            results = documents + shelves
+            results.sort(key=lambda item: item["id"])
+            if sort == "date_added":
+                results.sort(key=lambda item: (item["created_at"], (item["name"] if item["kind"] == "bookshelf" else item["title"]).casefold()), reverse=direction == "desc")
+            elif sort == "favorite":
+                results.sort(key=lambda item: item["created_at"], reverse=True)
+                results.sort(key=lambda item: bool(item["favorite"]), reverse=direction == "desc")
+            else:
+                def sort_text(item):
+                    if sort == "title":
+                        return item["name"] if item["kind"] == "bookshelf" else item["title"]
+                    if sort == "author":
+                        return "" if item["kind"] == "bookshelf" else item["author"]
+                    return "bookshelf" if item["kind"] == "bookshelf" else item["source_type"]
+
+                results.sort(key=lambda item: (sort_text(item) or "").casefold(), reverse=direction == "desc")
+                if sort == "author":
+                    results.sort(key=lambda item: not bool((sort_text(item) or "").strip()))
+            page = results[offset:offset + limit]
+            return jsonify(items=page, documents=[item for item in page if item["kind"] == "document"],
+                           total=len(results), library_total=len(all_rows), bookshelf_total=len(shelves),
+                           offset=offset, limit=limit, available_tags=self.suggestions(conn, user_id))
 
     def _routes(self):
         app = self.app

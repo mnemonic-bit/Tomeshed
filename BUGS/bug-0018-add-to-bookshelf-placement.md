@@ -1,6 +1,6 @@
 # Bug 0018 — Add to bookshelf is exposed as a separate card button
 
-**Status:** Open
+**Status:** Resolved in `0.2.17`
 
 ## Observed behavior
 
@@ -18,10 +18,16 @@ Remove `Add to bookshelf` from the visible card. Keep the same chooser available
 
 `static/app.js` appends `.document-bookshelf-action` directly to the card and calls `tomeshedBookshelves.choose`. The current three-dot Info control opens a separate card popover, which Bug 0021 removes.
 
-## Proposed resolution
+## Resolution
 
-Move the existing chooser trigger into the document-side panel. Keep its current action and error behavior when the panel is collapsed and reopened.
+Bug 0021 moved `Add to bookshelf` from each document card into the reader's document-side panel. The panel renders the action for the current document, and the action calls the existing bookshelf chooser. Minimizing the panel hides it without replacing its content; restoring the panel makes the action available again. The chooser lists only the user's owned bookshelves. The bookshelf membership API still checks bookshelf ownership, document access, and ready state before adding a member.
 
 ## Verification
 
-**not_run** — Documentation only. Confirm the card has no standalone Add to bookshelf button, the reader panel opens the chooser for the correct document, and unauthorized bookshelf changes remain rejected.
+**passed** — Source inspection of `static/app.js` and `static/reader.js` found no card-level bookshelf action. `renderDocumentInfo` adds the action to the reader panel for the document passed to `tomeshedReader.open`, and minimizing and restoring the panel preserves its content.
+
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_reader_panel.py` passed. The browser check found the action in the panel and verified that the panel and its contents survive minimize and restore.
+
+**passed** — `PYTHONPATH=.:tests .venv/bin/python tests/browser_check_bookshelves.py` passed. The browser check opened `PDF Book`, used the panel action to add it to `Reading`, and found `PDF Book` as the shelf's sole member.
+
+**passed** — `PYTHONPATH=. .venv/bin/pytest -q tests/test_bookshelves.py -k share_authorization_filtering_and_revocation` passed. The API test checks that a recipient cannot change the owner's bookshelf and cannot add an inaccessible document to a bookshelf they own.

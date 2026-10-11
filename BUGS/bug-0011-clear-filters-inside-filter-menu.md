@@ -1,6 +1,6 @@
 # Bug 0011 — Clear Filters is a standalone text button
 
-**Status:** Open
+**Status:** Resolved in `0.2.10`
 
 ## Observed behavior
 
@@ -18,10 +18,12 @@ Put an icon-only Clear Filters action inside the Filters popover. Give it the ac
 
 `templates/index.html` places `clearFilters` in `.catalog-tools`. Its handler in `static/app.js` also empties `librarySearch`, conflating search text with filter state.
 
-## Proposed resolution
+## Resolution
 
-Move the action into the filter panel and separate filter reset from search reset. Hide or disable it when no filter is active, while keeping the active-filter indication accurate.
+`templates/index.html` places the icon-only `Clear filters` button inside the Filters popover and gives it the accessible name `Clear filters`. `static/app.js` disables the button when no filter is active. Reset clears bookshelf scope, source type, author, favorite, reading state, selected tags, and tag-matching mode. It keeps the search query and sort field and direction, closes the popover, returns focus to the Filters button, and loads the first page of matching results. The active-filter mark excludes search-only state, while the status text still announces the search query.
 
 ## Verification
 
-**not_run** — Documentation only. Set search, every filter, and a nondefault sort; clear filters and confirm the query and sort remain, all filter values reset, and results and page position update.
+**passed** — `.venv/bin/python tests/browser_check_clear_filters.py` passed placement, accessible name, icon-only content, disabled state with search alone, reset of every filter, preserved search and sort, first-page results, active status, focus return, and tag-matching mode as the only active filter.
+
+**passed** — `.venv/bin/python tests/browser_check_filters_popover.py`, `.venv/bin/python tests/browser_check_organization.py`, and `.venv/bin/python tests/browser_check_bookshelves.py` passed the affected filter, catalog, and bookshelf browser checks.

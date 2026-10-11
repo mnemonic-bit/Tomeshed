@@ -11,6 +11,18 @@
   let lastTouch = 0;
   let pointerX = null;
   let pointerY = null;
+  let pendingHover = null;
+  let pendingFocus = null;
+  const suppressFocus = new WeakSet();
+  function cancelHover() {
+    if (!pendingHover) return;
+    clearTimeout(pendingHover.timer);
+    pendingHover = null;
+  }
+  function cancelFocus() {
+    clearTimeout(pendingFocus);
+    pendingFocus = null;
+  }
   function visibleCard(state = active) {
     if (!state?.card.isConnected || state.card.hidden || !state.card.getClientRects().length) return false;
     const rect = state.thumbnail.getBoundingClientRect();
@@ -19,14 +31,19 @@
     return rect.bottom > header && rect.top < footer && rect.right > 0 && rect.left < innerWidth;
   }
   function close(returnFocus = false) {
+    cancelHover();
+    cancelFocus();
     if (!active) return;
     const prior = active;
     generation++;
     request?.abort(); request = null;
     active = null;
     bubble.hidden = true;
-    prior.button.setAttribute('aria-expanded', 'false');
-    if (returnFocus && prior.focusReturn && visibleCard(prior)) prior.button.focus();
+    prior.trigger.setAttribute('aria-expanded', 'false');
+    if (returnFocus && prior.focusReturn && visibleCard(prior)) {
+      suppressFocus.add(prior.trigger);
+      prior.trigger.focus();
+    }
   }
   function place(recheckPointer = false) {
     if (!active || !visibleCard()) { close(); return; }
@@ -38,9 +55,9 @@
     const gap = 12;
     const leftRoom = Math.max(0, anchor.left - 12 - gap);
     const rightRoom = Math.max(0, innerWidth - anchor.right - 12 - gap);
-    const side = rightRoom >= 330 || rightRoom >= leftRoom ? 'right' : 'left';
+    const side = rightRoom >= 495 || rightRoom >= leftRoom ? 'right' : 'left';
     const room = side === 'right' ? rightRoom : leftRoom;
-    const width = Math.max(100, Math.min(330, room));
+    const width = Math.max(100, Math.min(495, room));
     bubble.style.width = `${width}px`;
     const height = Math.max(100, Math.min(500, bottomBound - topBound));
     bubble.style.height = `${height}px`;
@@ -103,17 +120,49 @@
       if (token === generation && active === owner && error.name !== 'AbortError') showFailure();
     }
   }
-  function open(id, card, thumbnail, button, focusReturn = false, pointerEvent = null) {
+  function open(id, card, thumbnail, trigger, focusReturn = false, pointerEvent = null) {
     if (!focusReturn && Date.now() - lastTouch < 600) return;
     if (pointerEvent) { pointerX = pointerEvent.clientX; pointerY = pointerEvent.clientY; }
     if (active?.id === id && active.card === card) { if (focusReturn) { active.focusReturn = true; closeButton.focus(); } return; }
     close();
-    active = {id, card, thumbnail, button, focusReturn, pointerInside: Boolean(pointerEvent), index: 0, total: 0};
+    active = {id, card, thumbnail, trigger, focusReturn, pointerInside: Boolean(pointerEvent), index: 0, total: 0};
     bubble.hidden = false;
-    button.setAttribute('aria-expanded', 'true');
+    trigger.setAttribute('aria-expanded', 'true');
     place();
     if (focusReturn) closeButton.focus();
     load();
+  }
+  function scheduleHover(id, card, thumbnail, trigger, event) {
+    if (event.buttons || document.body.classList.contains('reader-open') || Date.now() - lastTouch < 600) {
+      cancelHover();
+      return;
+    }
+    if (active?.id === id && active.card === card) return;
+    if (pendingHover?.id === id && pendingHover.card === card) {
+      pendingHover.x = event.clientX;
+      pendingHover.y = event.clientY;
+      return;
+    }
+    cancelHover();
+    const pending = {id, card, thumbnail, x: event.clientX, y: event.clientY};
+    pending.timer = setTimeout(() => {
+      if (pendingHover !== pending) return;
+      pendingHover = null;
+      if (!visibleCard(pending) || document.body.classList.contains('reader-open')) return;
+      const bounds = thumbnail.getBoundingClientRect();
+      if (pending.x < bounds.left || pending.x > bounds.right || pending.y < bounds.top || pending.y > bounds.bottom) return;
+      open(id, card, thumbnail, trigger, false, {clientX: pending.x, clientY: pending.y});
+    }, 800);
+    pendingHover = pending;
+  }
+  function scheduleFocus(id, card, thumbnail, trigger) {
+    cancelFocus();
+    if (suppressFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
+    pendingFocus = setTimeout(() => {
+      pendingFocus = null;
+      if (document.activeElement === trigger && visibleCard({card, thumbnail}) &&
+          !document.body.classList.contains('reader-open')) open(id, card, thumbnail, trigger, true);
+    }, 800);
   }
   function move(delta) {
     if (!active) return;
@@ -140,10 +189,14 @@
     if (!active.pointerInside && !active.card.contains(document.activeElement) && !bubble.contains(document.activeElement)) close();
   });
   document.addEventListener('pointerdown', event => {
+    cancelHover();
+    cancelFocus();
     if (event.pointerType === 'touch') lastTouch = Date.now();
   }, true);
+  document.addEventListener('dragstart', cancelHover, true);
   document.addEventListener('pointerleave', event => {
     if (event.pointerType === 'touch') return;
+    cancelHover();
     pointerX = null; pointerY = null;
     if (!active) return;
     active.pointerInside = false;
@@ -160,5 +213,5 @@
   closeButton.addEventListener('click', () => close(true));
   window.addEventListener('resize', () => place(true));
   window.addEventListener('scroll', () => place(true), true);
-  window.tomeshedPreview = {open, close, isOpen: () => Boolean(active)};
+  window.tomeshedPreview = {open, close, scheduleHover, cancelHover, scheduleFocus, cancelFocus, isOpen: () => Boolean(active)};
 })();

@@ -11,7 +11,28 @@
 <body data-role="{{ user.role }}">
   <header class="app-header">
     <h1 class="app-title"><img src="{{ url_for('static', filename='book.svg') }}" alt="" width="28" height="28"><span>Tomeshed</span></h1>
-    <label class="library-search" for="librarySearch"><span class="visually-hidden">Search library</span><input id="librarySearch" type="search" placeholder="Search title, author, filename, or text" autocomplete="off"></label>
+    <div class="library-search">
+      <div class="library-search-controls">
+        <label for="librarySearch"><span class="visually-hidden">Search library</span><input id="librarySearch" type="search" placeholder="Search documents or bookshelves" autocomplete="off"></label>
+        <button id="filtersToggle" class="search-action" type="button" aria-label="Filters" aria-controls="catalogFilters" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10m-7 6h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="filter-active-mark" aria-hidden="true"></span></button>
+        <button id="sortToggle" class="search-action" type="button" aria-label="Sort: Date added, Descending" aria-controls="catalogSort" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h15M4 12h10M4 17h5m10-3v6m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <div id="catalogSort" class="catalog-sort" hidden>
+        <label for="sortField">Sort by</label><select id="sortField"><option value="date_added">Date added</option><option value="title">Title</option><option value="author">Author</option><option value="type">Type</option><option value="favorite">Favorite</option></select>
+        <label for="sortDirection">Direction</label><select id="sortDirection"><option value="asc">Ascending</option><option value="desc" selected>Descending</option></select>
+      </div>
+      <p id="activeFilters" class="active-filters" role="status">No active filters</p>
+      <div id="catalogFilters" class="catalog-filters" hidden>
+        <div class="filter-panel-actions"><button id="clearFilters" type="button" aria-label="Clear filters" title="Clear filters" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h13l-5 7v5l-3 2v-7L3 5Zm13 10 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+        <label>Show <select id="filterScope"><option value="all">All</option><option value="documents">Documents only</option><option value="bookshelves">Only bookshelves</option></select></label>
+        <label>Source type <select id="filterType"><option value="">Any type</option><option value="pdf">PDF</option><option value="epub">EPUB</option><option value="docling">Docling</option></select></label>
+        <label>Author <input id="filterAuthor" type="search" placeholder="Author contains" autocomplete="off"></label>
+        <label>Favorite <select id="filterFavorite"><option value="">Any</option><option value="true">Favorites</option><option value="false">Not favorites</option></select></label>
+        <label>Reading state <select id="filterReading"><option value="">Any</option><option value="unread">Unread</option><option value="in_progress">In progress</option><option value="finished">Finished</option></select></label>
+        <fieldset><legend>Tags</legend><div id="filterTags" class="filter-tags"></div></fieldset>
+        <label>Tag matching <select id="filterTagMode"><option value="ALL">All selected</option><option value="ANY">Any selected</option></select></label>
+      </div>
+    </div>
     <div class="header-actions"><button id="chooseFile" class="upload-label" type="button">Add document</button><input id="uploadFile" type="file" accept=".pdf,.epub,.json,application/pdf,application/epub+zip,application/json" multiple hidden><button id="importsButton" type="button" aria-controls="importsDrawer" aria-expanded="false">Imports <span id="activeImportCount"></span></button></div>
     <div class="account-menu-wrap">
       <button id="accountMenuButton" class="account-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="current-username">{{ user.name }}</span><span aria-hidden="true">⌄</span></button>
@@ -23,46 +44,40 @@
   </header>
   <main>
     <section id="libraryPage" class="library-page">
-      <div class="library-heading"><div><p class="eyebrow">Your library</p><h2>Books and documents</h2></div>{% if user.role == 'admin' %}<button id="bulkClearButton" type="button">Clear library</button>{% endif %}</div>
-      <div class="catalog-tools">
-        <button id="filtersToggle" type="button" aria-controls="catalogFilters" aria-expanded="false">Filters</button>
-        <label>Sort <select id="catalogSort"><option value="newest">Newest first</option><option value="favorite">Favorites first</option></select></label>
-        <button id="clearFilters" type="button">Clear filters</button>
-      </div>
-      <div id="catalogFilters" class="catalog-filters" hidden>
-        <label>Source type <select id="filterType"><option value="">Any type</option><option value="pdf">PDF</option><option value="epub">EPUB</option><option value="docling">Docling</option></select></label>
-        <label>Author <input id="filterAuthor" type="search" placeholder="Author contains" autocomplete="off"></label>
-        <label>Favorite <select id="filterFavorite"><option value="">Any</option><option value="true">Favorites</option><option value="false">Not favorites</option></select></label>
-        <label>Reading state <select id="filterReading"><option value="">Any</option><option value="unread">Unread</option><option value="in_progress">In progress</option><option value="finished">Finished</option></select></label>
-        <fieldset><legend>Tags</legend><div id="filterTags" class="filter-tags"></div></fieldset>
-        <label>Tag matching <select id="filterTagMode"><option value="ALL">All selected</option><option value="ANY">Any selected</option></select></label>
-      </div>
-      <p id="activeFilters" class="active-filters" role="status"></p>
+      <div class="library-heading"><div><p class="eyebrow">Your library</p><h2>Books and documents</h2></div><button id="createBookshelf" type="button">Create bookshelf</button></div>
       <p id="libraryError" class="message error" role="alert" hidden></p>
-      <section id="bookshelfArea" class="bookshelf-area" aria-label="Bookshelves">
-        <div class="bookshelf-heading"><h2>My bookshelves</h2><button id="createBookshelf" type="button">Create bookshelf</button></div>
-        <div id="ownedBookshelves" class="bookshelf-list" aria-live="polite"></div>
-        <h2>Shared with me</h2><div id="sharedBookshelves" class="bookshelf-list" aria-live="polite"></div>
-      </section>
+      <p id="libraryNotice" class="message success" role="status" hidden></p>
       <div id="libraryEmpty" class="empty-library"><div class="empty-book" aria-hidden="true">▤</div><h3 id="libraryEmptyTitle">No books or PDFs yet</h3><p id="libraryEmptyText">Add a PDF, EPUB, or DoclingDocument JSON file to start your library.</p></div>
       <div id="documentGrid" class="document-grid" aria-live="polite"></div>
-      <button id="loadMoreDocuments" class="load-more" type="button" hidden>Load more documents</button>
+      <nav id="catalogPager" class="catalog-pager" aria-label="Library pages" hidden>
+        <button id="pagerFirst" type="button" aria-label="First page">«</button>
+        <button id="pagerPrev" type="button" aria-label="Previous page">‹</button>
+        <span id="pagerInfo" role="status"></span>
+        <button id="pagerNext" type="button" aria-label="Next page">›</button>
+        <button id="pagerLast" type="button" aria-label="Last page">»</button>
+      </nav>
+      <p id="catalogEndlessStatus" class="catalog-endless-status" role="status" hidden></p>
+      <div id="catalogSentinel" aria-hidden="true" hidden></div>
     </section>
     <section id="settingsPage" class="settings-page" hidden>
-      <div class="settings-page-header"><button id="settingsBack" class="settings-back" type="button" aria-label="Return to library">←</button><h2>Settings</h2></div>
+      <div class="settings-page-header"><button id="settingsBack" class="settings-back" type="button" aria-label="Return to library"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><h2>Settings</h2></div>
       <label class="settings-search" for="settingsSearchInput"><span class="visually-hidden">Search settings</span><input id="settingsSearchInput" type="search" placeholder="Search settings" autocomplete="off"></label>
       <div class="settings-layout">
-        <nav class="settings-nav" aria-label="Settings sections"><button type="button" data-target="settings-general">General</button>{% if user.role == 'admin' %}<button type="button" data-target="settings-users">Users</button>{% endif %}</nav>
+        <nav class="settings-nav" aria-label="Settings sections"><button type="button" data-target="settings-general">General</button>{% if user.role == 'admin' %}<button type="button" data-target="settings-users">Users</button><button type="button" class="danger" data-target="settings-danger">Danger Zone</button>{% endif %}</nav>
         <div class="settings-content">
           <p id="settingsError" class="message error" role="alert" hidden></p>
           <p id="settingsSuccess" class="message success" role="status" hidden></p>
-          <section id="settings-general" class="settings-section" data-search="general theme appearance light dark system browser colors">
-            <h3>General</h3><p class="section-intro">Choose how Tomeshed looks on your device.</p>
+          <section id="settings-general" class="settings-section" data-search="general theme appearance light dark system browser colors items per page pagination endless scrolling">
+            <h3>General</h3><p class="section-intro">Choose how Tomeshed looks and how many results appear at once.</p>
             <div class="setting-item" data-search="theme appearance light dark system browser color scheme">
               <div class="setting-copy"><label for="prefTheme">Theme</label><span>Use a light, dark, or system-matched appearance.</span></div>
               <select id="prefTheme"><option value="system">System (follow OS setting)</option><option value="light">Light</option><option value="dark">Dark</option></select>
             </div>
             <div class="settings-actions"><button id="saveTheme" type="button" class="primary">Save theme</button></div>
+            <div class="setting-item" data-search="items per page pagination endless scrolling library results">
+              <div class="setting-copy"><label for="prefPageSize">Items per page</label><span>Choose a page size or load more results as you scroll.</span></div>
+              <select id="prefPageSize"><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="endless">Endless scrolling</option></select>
+            </div>
           </section>
           {% if user.role == 'admin' %}
           <section id="settings-users" class="settings-section" data-search="users accounts administrators add suspend reactivate reset password remove">
@@ -76,6 +91,13 @@
               <label>Role<select name="role"><option value="normal">Normal</option><option value="admin">Administrator</option></select></label>
               <button class="primary" type="submit">Add account</button>
             </form>
+          </section>
+          <section id="settings-danger" class="settings-section settings-danger" data-search="danger zone clear library deletion delete documents managed files remove">
+            <h3>Danger Zone</h3><p class="section-intro">Permanently remove documents from this library.</p>
+            <div class="setting-item" data-search="clear library deletion delete documents managed files remove">
+              <div class="setting-copy"><strong>Clear library</strong><span>Remove every document and its managed files. Review the count before confirming.</span></div>
+              <button id="bulkClearButton" class="danger" type="button">Clear library</button>
+            </div>
           </section>
           {% endif %}
           <p id="settingsNoResults" class="settings-no-results" role="status" hidden>No settings match your search.</p>
@@ -98,9 +120,19 @@
         <button id="readerStartOver" type="button">Start over</button>
       </div>
     </header>
-    <nav id="readerToc" class="reader-toc" aria-label="Table of contents" hidden></nav>
-    <div id="readerScroll" class="reader-scroll" tabindex="0"><div id="readerContent" class="reader-content"></div></div>
-    <p id="readerError" class="reader-error" role="alert" hidden></p>
+    <div class="reader-workspace">
+      <aside id="readerDocumentPanel" class="reader-document-panel" aria-label="Document info">
+        <div class="reader-panel-heading"><button id="readerPanelMinimize" type="button" aria-label="Minimize document info">‹</button><strong>Document info</strong></div>
+        <p id="readerPanelError" class="reader-panel-error" role="alert" hidden></p>
+        <div id="readerPanelContent"></div>
+      </aside>
+      <div class="reader-main">
+        <button id="readerPanelRestore" class="reader-panel-restore" type="button" aria-label="Restore document info" hidden>›</button>
+        <nav id="readerToc" class="reader-toc" aria-label="Table of contents" hidden></nav>
+        <div id="readerScroll" class="reader-scroll" tabindex="0"><div id="readerContent" class="reader-content"></div></div>
+        <p id="readerError" class="reader-error" role="alert" hidden></p>
+      </div>
+    </div>
   </section>
   <aside id="previewBubble" class="preview-bubble" role="region" aria-label="Document preview" hidden>
     <div class="preview-toolbar"><span id="previewPosition" role="status">Loading preview…</span><button id="previewClose" type="button" aria-label="Close preview">×</button></div>
@@ -110,7 +142,7 @@
   <div id="fileDropTarget" class="file-drop-target" role="status" hidden><strong>Drop documents to import</strong><span>PDF, EPUB, or DoclingDocument JSON</span></div>
   <aside id="importsDrawer" class="imports-drawer" aria-label="Import jobs" hidden><div class="drawer-heading"><h2>Imports</h2><button id="closeImports" type="button" aria-label="Close imports">×</button></div><form id="urlImportForm" class="url-import-form"><label for="importUrl">Direct PDF or EPUB URL</label><input id="importUrl" type="url" placeholder="https://example.com/book.pdf" required><button type="submit">Import URL</button></form><p id="importError" class="message error" role="alert" hidden></p><div id="importJobList" class="job-list"></div></aside>
   <footer id="versionFooter" class="version-footer" data-ui-version="{{ version }}">
-    <span id="libraryCount">0 documents</span><span aria-hidden="true"> · </span>
+    <span id="libraryCount">0 items</span><span aria-hidden="true"> · </span>
     <span id="connectionStatus" role="status">Checking connection…</span><span aria-hidden="true"> · </span><span>UI v{{ version }}</span><span aria-hidden="true"> · </span><span id="apiVersion">API checking…</span><span aria-hidden="true"> · </span><span id="apiUptime">Uptime checking…</span>
     <span id="versionWarning" class="version-warning" hidden><span id="versionWarningText"></span> <a href="{{ url_for('index') }}">Refresh page</a></span>
   </footer>

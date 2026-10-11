@@ -72,7 +72,7 @@ def main():
                 with page.expect_file_chooser() as chooser:
                     page.get_by_role('button',name='Add document').tap()
                 chooser.value.set_files(str(epub))
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '1 document'",timeout=60000)
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '1 result'",timeout=60000)
                 assert page.locator('.document-card').count()==1
                 picker_button=page.get_by_role('button',name='Add document')
                 picker_button.focus()
@@ -80,12 +80,12 @@ def main():
                 with page.expect_file_chooser() as chooser:
                     picker_button.press('Enter')
                 chooser.value.set_files([str(picker_pdf),str(picker_json)])
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '3 documents'",timeout=60000)
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '3 results'",timeout=60000)
                 checks.append('touch EPUB picker and keyboard PDF/JSON picker')
                 page.evaluate("""() => {window.workflowSnapshots=[];window.workflowSampler=setInterval(async()=>{try{const jobs=(await (await fetch('/api/imports')).json()).jobs;window.workflowSnapshots.push(...jobs.filter(j=>j.original_filename.startsWith('Drop ') && j.original_filename!=='Drop Bad.pdf').map(j=>({name:j.original_filename,state:j.state,bytes:j.bytes_received})));}catch(_){ }},25)}""")
                 payload=[{'name':path.name,'data':base64.b64encode(path.read_bytes()).decode()} for path in (pdf,structured,bad)]
                 page.evaluate("""files => {const data=new DataTransfer();for(const item of files){const bytes=Uint8Array.from(atob(item.data),c=>c.charCodeAt(0));data.items.add(new File([bytes],item.name));}document.dispatchEvent(new DragEvent('dragenter',{dataTransfer:data,bubbles:true,cancelable:true}));document.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));}""",payload)
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '5 documents'",timeout=60000)
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '5 results'",timeout=60000)
                 page.wait_for_function("[...document.querySelectorAll('.import-job')].some(row => row.textContent.includes('Drop Bad.pdf') && row.textContent.includes('failed'))")
                 assert page.locator('#fileDropTarget').is_hidden()
                 assert page.locator('.document-card').count()==5
@@ -110,45 +110,99 @@ def main():
                 with page.expect_file_chooser() as chooser:
                     failed_row.get_by_role('button',name='Retry').click()
                 chooser.value.set_files(str(pdf))
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '6 documents'",timeout=60000)
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '6 results'",timeout=60000)
                 checks.append('failed browser retry with selected file')
                 page.locator('#closeImports').click()
                 card=page.locator('.document-card').filter(has_text='Drop Good').first
-                card.get_by_role('button',name='Info for Drop Good').click()
-                panel=card.locator('.document-info')
+                card.locator('.document-open').dblclick()
+                panel=page.locator('#readerDocumentPanel')
                 assert panel.get_by_role('link',name='Download original (PDF)').is_visible()
                 assert panel.get_by_role('link',name='Download Docling JSON').is_visible()
                 panel.locator('.source-rename-form input').fill('Renamed shelf.pdf')
                 panel.get_by_role('button',name='Rename file').click()
                 page.wait_for_function("[...document.querySelectorAll('.document-info')].some(p=>p.textContent.includes('Renamed shelf.pdf'))")
-                page.screenshot(path=str(ARTIFACTS/'info-390.png'),full_page=True)
-                checks.append('Info exports and stored filename rename')
+                page.screenshot(path=str(ARTIFACTS/'reader-panel-390.png'),full_page=True)
+                checks.append('reader panel exports and stored filename rename')
                 dialog_text=[]
-                page.on('dialog',lambda dialog: (dialog_text.append(dialog.message),dialog.accept()))
-                card=page.locator('.document-card').filter(has_text='Drop Good').first
-                card.get_by_role('button',name='Remove document').click()
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '5 documents'")
+                dialog_decisions=[]
+                def handle_dialog(dialog):
+                    dialog_text.append(dialog.message)
+                    if dialog_decisions and not dialog_decisions.pop(0): dialog.dismiss()
+                    else: dialog.accept()
+                page.on('dialog',handle_dialog)
+                panel.get_by_role('button',name='Remove document').click()
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '5 results'")
+                assert page.locator('#reader').is_hidden()
+                assert 'was removed' in page.locator('#libraryNotice').inner_text()
                 checks.append('confirmed single document removal')
                 page.locator('#importsButton').click()
                 url=f'http://127.0.0.1:{remote.server_port}/Url_Book.pdf?token=secret#fragment'
                 page.locator('#importUrl').fill(url)
                 page.locator('#urlImportForm button').click()
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '6 documents'",timeout=60000)
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '6 results'",timeout=60000)
                 page.locator('#closeImports').click()
                 url_card=page.locator('.document-card').filter(has_text='Url Book').first
-                url_card.get_by_role('button',name='Info for Url Book').click()
-                info_text=url_card.locator('.document-info').inner_text()
+                url_card.locator('.document-open').dblclick()
+                info_text=page.locator('#readerDocumentPanel').inner_text()
                 assert 'token=REDACTED' in info_text and 'secret' not in info_text and 'fragment' not in info_text
-                page.screenshot(path=str(ARTIFACTS/'url-info-390.png'),full_page=True)
-                checks.append('URL import and redacted Info source URL')
+                page.screenshot(path=str(ARTIFACTS/'url-reader-panel-390.png'),full_page=True)
+                checks.append('URL import and redacted reader panel source URL')
+                page.locator('#readerClose').click()
                 page.set_viewport_size({'width':1280,'height':800})
                 page.screenshot(path=str(ARTIFACTS/'library-1280.png'),full_page=True)
                 preview=page.evaluate("async () => await (await fetch('/api/library/clear/preview')).json()")
                 assert preview['document_count']==6 and preview['file_count']>=6
+                assert page.locator('#libraryPage #bulkClearButton').count()==0
+                page.locator('#accountMenuButton').click()
+                page.locator('#settingsMenuItem').click()
+                assert page.locator('#settings-danger').is_visible()
+                assert page.locator('.settings-nav [data-target="settings-danger"]').is_visible()
+                page.locator('#settingsSearchInput').fill('deletion')
+                assert page.locator('#settings-danger').is_visible()
+                assert page.locator('#bulkClearButton').is_visible()
+                assert page.locator('#settings-general').is_hidden()
+                dialog_decisions.append(False)
                 page.locator('#bulkClearButton').click()
-                page.wait_for_function("document.querySelector('#libraryCount').textContent === '0 documents'")
+                assert page.locator('#libraryCount').inner_text()=='6 results'
+                assert page.locator('#settingsSuccess').is_hidden()
+                checks.append('administrator Settings Danger Zone search and cancellation')
+                def stale_clear(route):
+                    route.fulfill(status=409,content_type='application/json',body=json.dumps({'error':'Library changed; request a new preview'}))
+                page.route('**/api/library/clear',stale_clear)
+                page.locator('#bulkClearButton').click()
+                page.locator('#settingsError').wait_for(state='visible')
+                assert page.locator('#settingsError').is_visible()
+                assert 'Library changed' in page.locator('#settingsError').inner_text()
+                assert page.locator('#libraryCount').inner_text()=='6 results'
+                page.unroute('**/api/library/clear',stale_clear)
+                page.locator('#bulkClearButton').click()
+                page.wait_for_function("document.querySelector('#libraryCount').textContent === '0 results'")
+                page.locator('#settingsSuccess').wait_for(state='visible')
                 assert dialog_text and '6 documents' in dialog_text[-1]
-                checks.append('administrator bulk preview and confirmed clear')
+                assert page.locator('#settingsSuccess').is_visible()
+                assert '6 documents removed' in page.locator('#settingsSuccess').inner_text()
+                assert page.locator('#settingsError').is_hidden()
+                checks.append('administrator bulk preview, stale error, and confirmed clear in Settings')
+                created=page.evaluate("async () => await (await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'reader',name:'Reader',password:'reader-password',role:'normal'})})).json()")
+                assert created['role']=='normal'
+                normal_context=browser.new_context()
+                normal_page=normal_context.new_page()
+                normal_page.goto(base+'/login')
+                normal_page.locator('[name="username"]').fill('reader')
+                normal_page.locator('[name="password"]').fill('reader-password')
+                normal_page.get_by_role('button',name='Sign in').click()
+                normal_page.wait_for_url(base+'/')
+                normal_page.locator('#accountMenuButton').click()
+                normal_page.locator('#settingsMenuItem').click()
+                assert normal_page.locator('#settings-danger').count()==0
+                assert normal_page.locator('#bulkClearButton').count()==0
+                assert normal_page.locator('.settings-nav [data-target="settings-danger"]').count()==0
+                normal_page.locator('#settingsSearchInput').fill('deletion')
+                assert normal_page.locator('#settingsNoResults').is_visible()
+                denied=normal_page.evaluate("async () => [await fetch('/api/library/clear/preview'),await fetch('/api/library/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'invalid'})})].map(response=>response.status)")
+                assert denied==[403,403],denied
+                checks.append('normal user has no Danger Zone and both clear endpoints return 403')
+                normal_context.close()
                 browser.close()
             report={'result':'passed','checks':checks}
             (ARTIFACTS/'report.json').write_text(json.dumps(report,indent=2))

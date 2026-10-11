@@ -1,6 +1,6 @@
 # Bug 0014 — Library lacks VDL-style page size and pager controls
 
-**Status:** Open
+**Status:** Resolved in `0.2.11`
 
 ## Observed behavior
 
@@ -18,10 +18,14 @@ Add `Items per page` to General Settings with values 5, 10, 20, 50, and `Endless
 
 `templates/index.html` has `loadMoreDocuments` but no pager or page-size setting. `static/app.js` uses offsets and appends on demand. `organization_service.py` caps requested limits at the server setting; `tomeshed.py` preferences store only Theme. VDL's current pager and page-size handling are in `VDL/templates/index.html` and `VDL/static/app.js`.
 
-## Proposed resolution
+## Resolution
 
-Extend per-user preferences and validate page-size values on the server. Make the catalog endpoint page the combined authorized result set with a total after search, filters, and sorting. Add numbered pager and endless-scroll behavior in the browser. Retain a server-side maximum request size and handle a page becoming empty after deletion or access changes by moving to the last valid page.
+`tomeshed.py` now migrates existing preferences and persists a validated per-user `page_size` value. Theme-only and page-size-only updates preserve the other setting. The default catalog request cap is 50; the existing endpoint continues to page the authorized mixed result set and report its filtered total. General Settings offers 5, 10, 20, 50, and Endless scrolling. Numbered mode shows the current page, total pages, matching-item count, and boundary-disabled navigation. Search, filter, sort, scope, and page-size changes return to page one. A shortened final page moves to the last valid page. Endless mode fetches authorized batches when the grid sentinel enters the viewport, including when the sentinel is already visible after returning from Settings, and reports loading and completion. Live refreshes retain visible card order under Favorite sorting.
 
 ## Verification
 
-**not_run** — Documentation only. Check each page size across reload and restart with two users, mixed document and bookshelf cards, filtered totals, boundary controls, deletion of the last item on a page, and endless loading at desktop and mobile widths.
+**passed** — `PYTHONPATH=. .venv/bin/pytest -q` (70 tests), `node --check static/app.js`, and `git diff --check` exited with code 0. `tests/test_catalog_pagination.py` covers value validation, two-user isolation, mixed authorized totals, 50-item requests, and persistence after reinitialization. `tests/test_app.py` covers migration from the earlier preferences schema.
+
+**passed** — `.venv/bin/python tests/browser_check_pagination.py` exercised each page size, mixed bookshelf and document results, pager boundaries, search/scope/sort resets, deletion of the only item on the last page, endless loading at desktop and mobile widths, two users, and persistence after process restart. `.venv/bin/python tests/browser_check_clear_filters.py`, `.venv/bin/python tests/browser_check_bookshelves.py`, and `.venv/bin/python tests/browser_check_organization.py` exited with code 0 after replacing their Load more expectations. The organization check retained its sort, favorite-order, and concurrent live-update assertions while using endless scrolling.
+
+**failed, separate defect** — `tests/browser_check_documents.py` reaches a mobile import-drawer close button that the header intercepts. The mobile drawer overlap is outside Bug 0014 and is assigned to Bug 0022.

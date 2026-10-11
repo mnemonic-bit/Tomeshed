@@ -1,6 +1,6 @@
 # Bug 0007 — Clear Library belongs in administrator Settings
 
-**Status:** Open
+**Status:** Resolved in `0.2.5`
 
 ## Observed behavior
 
@@ -18,10 +18,12 @@ Show `Clear library` only in an Administrator-only Danger Zone in Settings. Keep
 
 `templates/index.html` places `bulkClearButton` in `.library-heading`; `static/app.js` binds its action there. `file_workflows.py` already enforces the role on both clear routes. VDL puts its destructive history action in an administrator-only Danger Zone in `VDL/templates/index.html`.
 
-## Proposed resolution
+## Resolution
 
-Move the action into a Settings Danger Zone and add an administrator-only navigation entry. Preserve the existing server authorization and confirmation flow. Keep the action available through Settings search when the Administrator searches for library deletion.
+Moved `Clear library` from the library heading to an administrator-only Settings Danger Zone and added a matching navigation entry. Settings search finds the action for `deletion`. The browser action retains the preview, confirmation, and token submission. It now reports success and errors in Settings. Both clear routes still check the administrator role.
 
 ## Verification
 
-**not_run** — Documentation only. Check both roles in a browser, then call both endpoints as a normal user. Check confirmation cancellation, stale preview, success, and error feedback as an Administrator.
+**passed** — `.venv/bin/python tests/browser_check_file_workflows.py` failed before the change because the clear button remained in the library heading. After the change, the same command exited with code 0. The browser check covered Settings placement and search, confirmation cancellation, a simulated HTTP 409 shown in Settings, successful clearing, normal-user visibility, and HTTP 403 from both clear routes for a normal user.
+
+**passed** — `PYTHONPATH=. .venv/bin/pytest -q tests/test_file_workflows.py::test_bulk_stale_cleanup_retry_and_path_boundary` exited with code 0. The server check submitted a preview token after the library changed and received HTTP 409.

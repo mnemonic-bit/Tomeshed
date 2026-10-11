@@ -1,6 +1,6 @@
 # Bug 0010 — Sorting lacks useful fields and direction controls
 
-**Status:** Open
+**Status:** Resolved in `0.2.9`
 
 ## Observed behavior
 
@@ -18,10 +18,16 @@ Put an icon-only Sort button beside search and Filters. Its compact popover must
 
 `templates/index.html` exposes a two-option select. `organization_service.py` validates only `newest` and `favorite`, sorts by import time and ID, then applies favorite-first when requested. The new fields and reverse order require catalog API work as well as UI work.
 
-## Proposed resolution
+## Resolution
 
-Represent sort as a field and direction in catalog state and API parameters. Define consistent case-insensitive text order, missing-value placement, and stable ties. Reset paging to the first page after an explicit sort change. Keep the current rule that a favorite click or live update does not move cards already visible until the user explicitly sorts or searches again.
+The search row now has an icon-only Sort button with an accessible name that announces the active field and direction. The keyboard-accessible popover contains Date added, Title, Author, Type, and Favorite fields and both directions. Favorite directions read `Favorites first` and `Favorites last`.
+
+The catalog API accepts `sort=date_added|title|author|type|favorite` and `direction=asc|desc`. Date added defaults to descending. The existing `sort=newest` and `sort=favorite` requests remain valid. The API sorts all authorized documents and bookshelves before pagination. Text comparisons use casefolded values; equal sort keys use ID order. Favorite groups retain date order. Bookshelves use their creation date and name for date sorting, their name for title sorting, and `bookshelf` for type sorting. Bookshelves and documents with no author follow named authors in both directions. A field or direction change resets the visible results to the first page. Favorite changes and live updates preserve the order of visible cards until a sort or search change.
 
 ## Verification
 
-**not_run** — Documentation only. Use mixed PDF, EPUB, and bookshelf fixtures with repeated names and missing authors. Check both directions, stable page boundaries, the default, and keyboard operation of the popover.
+**passed** — `PYTHONPATH=. .venv/bin/pytest -q tests/test_catalog_sort.py tests/test_organization.py tests/test_catalog_bookshelves.py` passed 6 tests. The sort tests cover mixed source types and bookshelves, both directions, repeated names, missing authors, stable page boundaries, defaults, aliases, and invalid parameters.
+
+**passed** — `PYTHONPATH=. .venv/bin/python tests/browser_check_organization.py` passed the sort popover, keyboard dismissal, favorite and live update order, and existing organization checks.
+
+**passed** — `PYTHONPATH=. .venv/bin/python tests/browser_check_filters_popover.py` passed filter popover geometry and dismissal checks with the Sort button beside Filters.

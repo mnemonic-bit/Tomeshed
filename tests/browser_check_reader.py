@@ -75,7 +75,7 @@ def mixed_pdf_bytes():
 
 def open_card(page, title):
     card = page.locator('.document-card').filter(has_text=title)
-    card.locator('.document-open').click()
+    card.locator('.document-open').dblclick()
     page.locator('#reader').wait_for(state='visible')
     page.wait_for_function("document.querySelector('#readerPosition').textContent !== 'Opening…'")
     return card
@@ -139,7 +139,7 @@ def main():
                 assert page.locator('#librarySearch').input_value() == 'PDF'
                 assert abs(page.evaluate('window.scrollY') - library_scroll) <= 2
                 assert page.evaluate("document.activeElement.closest('.document-card')?.dataset.documentId") == warning_id
-                warning.locator('.document-open').click()
+                warning.locator('.document-open').dblclick()
                 page.keyboard.press('Escape')
                 assert page.evaluate("document.activeElement.closest('.document-card')?.dataset.documentId") == warning_id
                 page.set_viewport_size({'width': 900, 'height': 750})

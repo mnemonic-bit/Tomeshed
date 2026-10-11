@@ -1,6 +1,6 @@
 # Bug 0020 — A single click opens the reader instead of selecting a document
 
-**Status:** Open
+**Status:** Resolved in `0.2.16`
 
 ## Observed behavior
 
@@ -18,10 +18,10 @@ A single click selects one document without opening the reader. Show a tick on a
 
 `static/app.js` binds the thumbnail button's `click` directly to `tomeshedReader.open`; it renders `.document-new-badge` independently and has no selection state. The reader itself already accepts an opener for focus restoration.
 
-## Proposed resolution
+## Resolution
 
-Separate card selection from reader opening, handle double-click without leaving a misleading selected state, and render New and selected indicators from one visual state. Keep selection confined to one document and clear it when the document disappears from the current results.
+`static/app.js` now tracks one selected document. A thumbnail click selects or deselects the document; a second document click moves selection. The selected card shows a green tick in place of New and exposes an Open action for touch. A thumbnail double-click or focused thumbnail Enter opens the reader and clears selection. Favorite activation does not change selection. Catalog replacement clears selection when its document leaves the current results.
 
 ## Verification
 
-**not_run** — Documentation only. Check one click, another click, double-click, Favorite click, unread badge restoration, keyboard opening, touch opening, and selection after filtering or pagination.
+**passed** — `PYTHONPATH=tests:. .venv/bin/python tests/browser_check_selection.py` reproduced the one-click reader open before the fix and passed after the fix. The check covers single selection, moving and clearing selection, New restoration, Favorite isolation, double-click, Enter, touch Open, filtering, and pagination. `tests/browser_check_preview.py` passed, including touch hold without selection; `tests/browser_check_reader.py`, `tests/browser_check_organization.py`, and `tests/browser_check_documents.py` passed after updating their reader-opening actions.

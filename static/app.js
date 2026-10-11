@@ -4,7 +4,19 @@ const menu = $('accountMenu');
 const settings = $('settingsPage');
 const library = $('libraryPage');
 const themeControl = $('prefTheme');
+const pageSizeControl = $('prefPageSize');
+let catalogPageSize = '10';
 let healthInFlight = false;
+const header = document.querySelector('.app-header');
+const versionFooter = $('versionFooter');
+function updateFixedEdges() {
+  document.documentElement.style.setProperty('--app-header-height', `${header.getBoundingClientRect().height}px`);
+  document.documentElement.style.setProperty('--version-footer-height', `${versionFooter.getBoundingClientRect().height}px`);
+}
+updateFixedEdges();
+const fixedEdgesObserver = new ResizeObserver(updateFixedEdges);
+fixedEdgesObserver.observe(header);
+fixedEdgesObserver.observe(versionFooter);
 
 function showError(message) { $('settingsSuccess').hidden = true; $('settingsError').textContent = message; $('settingsError').hidden = false; }
 function showSuccess(message) { $('settingsError').hidden = true; $('settingsSuccess').textContent = message; $('settingsSuccess').hidden = false; }
@@ -38,7 +50,12 @@ async function api(path, options = {}) {
   return data;
 }
 async function loadPreferences() {
-  try { const data = await api('/api/preferences'); themeControl.value = data.theme; applyTheme(data.theme); }
+  try {
+    const data = await api('/api/preferences');
+    themeControl.value = data.theme; applyTheme(data.theme);
+    pageSizeControl.value = data.page_size;
+    if (catalogPageSize !== data.page_size) { catalogPageSize = data.page_size; loadCatalog(); }
+  }
   catch (error) { showError(`Could not load preferences: ${error.message}`); }
 }
 themeControl.addEventListener('change', () => applyTheme(themeControl.value));
@@ -49,13 +66,22 @@ $('saveTheme').addEventListener('click', async () => {
     showSuccess('Theme saved.');
   } catch (error) { themeControl.value = selected; showError(`Theme was not saved: ${error.message}`); }
 });
+pageSizeControl.addEventListener('change', async () => {
+  const selected = pageSizeControl.value;
+  try {
+    await api('/api/preferences', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({page_size: selected})});
+    catalogPageSize = selected;
+    loadCatalog();
+    showSuccess('Items per page saved.');
+  } catch (error) { pageSizeControl.value = catalogPageSize; showError(`Items per page was not saved: ${error.message}`); }
+});
 function openSettings() {
   closeMenu(); library.hidden = true; settings.hidden = false; document.body.classList.add('settings-open');
   $('settingsSearchInput').value = ''; filterSettings(); loadPreferences();
   if ($('userList')) loadUsers();
   $('settingsSearchInput').focus();
 }
-function closeSettings() { settings.hidden = true; library.hidden = false; document.body.classList.remove('settings-open'); menuButton.focus(); }
+function closeSettings() { settings.hidden = true; library.hidden = false; document.body.classList.remove('settings-open'); menuButton.focus(); requestAnimationFrame(loadVisibleEndless); }
 $('settingsMenuItem').addEventListener('click', openSettings);
 $('settingsBack').addEventListener('click', closeSettings);
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !settings.hidden && menu.hidden && document.activeElement !== $('settingsSearchInput')) closeSettings(); });
@@ -154,7 +180,11 @@ if ($('addUserForm')) $('addUserForm').addEventListener('submit', async event =>
 });
 loadPreferences();
 
-let catalogOffset = 0;
+let catalogPage = 0;
+let catalogEffectivePageSize = 10;
+let catalogLoaded = 0;
+let catalogTotal = 0;
+let catalogLoading = false;
 let catalogSignature = '';
 let catalogGeneration = 0;
 let searchTimer;
@@ -162,26 +192,62 @@ let availableTags = [];
 let pendingCatalogMutation = 0;
 let deferredCatalogRefresh = false;
 const catalogItems = new Map();
-function catalogParams(offset = 0) {
+let selectedDocumentId = null;
+function updateDocumentSelection(card) {
+  const item = catalogItems.get(card.dataset.documentId);
+  if (!item) return;
+  const selected = selectedDocumentId === item.id;
+  card.classList.toggle('document-selected', selected);
+  card.querySelector('.document-open').setAttribute('aria-pressed', String(selected));
+  card.querySelector('.document-selected-open').hidden = !selected;
+  card.querySelector('.document-selection-badge, .document-new-badge')?.remove();
+  if (selected) {
+    const badge = element('span', 'document-selection-badge', '✓');
+    badge.setAttribute('aria-hidden', 'true');
+    card.append(badge);
+  } else if (item.reading_state === 'unread') card.append(element('span', 'document-new-badge', 'new'));
+}
+function selectDocument(id) {
+  const previous = selectedDocumentId;
+  selectedDocumentId = id === previous ? null : id;
+  for (const candidate of new Set([previous, selectedDocumentId])) {
+    if (!candidate) continue;
+    const card = $('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(candidate)}"]`);
+    if (card) updateDocumentSelection(card);
+  }
+}
+function catalogParams(offset = 0, limit = catalogPageSize === 'endless' ? 50 : Number(catalogPageSize)) {
   const params = new URLSearchParams({
-    q: $('librarySearch').value.trim(), offset: String(offset),
+    q: $('librarySearch').value.trim(), offset: String(offset), limit: String(limit),
+    scope: $('filterScope').value,
     type: $('filterType').value, author: $('filterAuthor').value.trim(),
     favorite: $('filterFavorite').value, reading_state: $('filterReading').value,
-    tag_mode: $('filterTagMode').value, sort: $('catalogSort').value
+    tag_mode: $('filterTagMode').value, sort: $('sortField').value,
+    direction: $('sortDirection').value
   });
   document.querySelectorAll('#filterTags input:checked').forEach(input => params.append('tag', input.value));
   return params;
 }
+function hasActiveCatalogFilters() {
+  return Boolean($('filterScope').value !== 'all' || $('filterType').value || $('filterAuthor').value.trim() ||
+    $('filterFavorite').value || $('filterReading').value || $('filterTagMode').value !== 'ALL' ||
+    document.querySelector('#filterTags input:checked'));
+}
 function catalogFiltersLabel() {
   const labels = [];
   const q = $('librarySearch').value.trim(); if (q) labels.push(`Search: ${q}`);
+  if ($('filterScope').value !== 'all') labels.push($('filterScope').selectedOptions[0].textContent);
   if ($('filterType').value) labels.push(`Type: ${$('filterType').value.toUpperCase()}`);
   if ($('filterAuthor').value.trim()) labels.push(`Author: ${$('filterAuthor').value.trim()}`);
   if ($('filterFavorite').value) labels.push(`Favorite: ${$('filterFavorite').value === 'true' ? 'yes' : 'no'}`);
   if ($('filterReading').value) labels.push(`Reading: ${$('filterReading').selectedOptions[0].textContent}`);
   const tags = [...document.querySelectorAll('#filterTags input:checked')].map(input => input.value);
   if (tags.length) labels.push(`Tags (${ $('filterTagMode').value }): ${tags.join(', ')}`);
+  else if ($('filterTagMode').value !== 'ALL') labels.push('Tag matching: Any selected');
   $('activeFilters').textContent = labels.length ? labels.join(' · ') : 'No active filters';
+  const active = hasActiveCatalogFilters();
+  document.querySelector('.library-search').classList.toggle('has-active-filters', active);
+  $('clearFilters').disabled = !active;
 }
 function renderTagFilters(names) {
   availableTags = names;
@@ -200,14 +266,9 @@ async function documentMutation(id, suffix, options, onSuccess) {
   function restoreCard(item) {
     const card = document.querySelector(`.document-card[data-document-id="${CSS.escape(id)}"]`);
     if (!card || !item) return;
-    const openInfo = !card.querySelector('.document-info').hidden;
     const focusedClass = card.contains(document.activeElement) ? document.activeElement.classList[0] : null;
     card.replaceWith(renderDocument(item));
     const next = document.querySelector(`.document-card[data-document-id="${CSS.escape(id)}"]`);
-    if (openInfo) {
-      next.querySelector('.document-info').hidden = false;
-      next.querySelector('.document-info-button').setAttribute('aria-expanded', 'true');
-    }
     if (focusedClass) next.querySelector(`.${CSS.escape(focusedClass)}`)?.focus({preventScroll: true});
   }
   pendingCatalogMutation++;
@@ -217,27 +278,33 @@ async function documentMutation(id, suffix, options, onSuccess) {
     catalogItems.set(id, data.document);
     if (data.available_tags) renderTagFilters(data.available_tags);
     restoreCard(data.document);
+    window.tomeshedReader?.updateDocument(data.document);
     if (onSuccess) onSuccess(data.document);
-  } catch (error) { restoreCard(confirmed); failure = `Change was not saved: ${error.message}`; }
+  } catch (error) { restoreCard(confirmed); failure = `Change was not saved: ${error.message}`; window.tomeshedReader?.panelError(id, failure); }
   finally {
     pendingCatalogMutation--;
     if (!pendingCatalogMutation) { deferredCatalogRefresh = false; await loadCatalog(false, true); }
-    if (failure) showLibraryError(failure);
+    if (failure && !window.tomeshedReader?.isOpenFor(id)) showLibraryError(failure);
   }
-}
-function pageBadge(document) {
-  const type = document.source_type === 'docling' ? 'DOCLING' : document.source_type.toUpperCase();
-  if (document.count_kind === 'estimated') return {text: `${type} · ~${document.page_count} pages`, label: `${type}, approximately ${document.page_count} pages, estimated`};
-  if (document.count_kind === 'exact') return {text: `${type} · ${document.page_count} pages`, label: `${type}, ${document.page_count} pages`};
-  return {text: `${type} · pages unknown`, label: `${type}, page count unknown`};
 }
 function renderDocument(document) {
   const card = element('article', 'document-card');
   card.dataset.documentId = document.id;
   const preview = element('div', 'document-preview');
   const open = element('button', 'document-open');
-  open.type = 'button'; open.setAttribute('aria-label', `Open ${document.title}`);
-  open.addEventListener('click', () => { window.tomeshedPreview.close(); window.tomeshedReader.open(document, open); });
+  open.type = 'button'; open.setAttribute('aria-label', `Select ${document.title}`);
+  open.title = 'Double-click or press Enter to open';
+  const openReader = () => {
+    if (selectedDocumentId) selectDocument(selectedDocumentId);
+    window.tomeshedPreview.close(); window.tomeshedReader.open(document, open);
+  };
+  let suppressTouchClick = false;
+  open.addEventListener('click', event => {
+    if (suppressTouchClick) { event.preventDefault(); suppressTouchClick = false; return; }
+    if (!window.document.body.classList.contains('reader-open')) selectDocument(document.id);
+  });
+  open.addEventListener('dblclick', event => { event.preventDefault(); openReader(); });
+  open.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); openReader(); } });
   const fallback = element('span', 'document-fallback', document.source_type.toUpperCase());
   open.append(fallback);
   if (document.thumbnail_available) {
@@ -245,68 +312,105 @@ function renderDocument(document) {
     img.src = `/api/documents/${encodeURIComponent(document.id)}/thumbnail`;
     img.addEventListener('error', () => img.remove()); open.append(img);
   }
-  const badge = pageBadge(document);
-  const badgeNode = element('span', 'document-page-badge', badge.text);
-  badgeNode.setAttribute('aria-label', badge.label);
-  open.append(badgeNode); preview.append(open); card.append(preview);
-  if (document.reading_state === 'unread') card.append(element('span', 'document-new-badge', 'new'));
+  preview.append(open);
+  if (document.state === 'ready_with_warning') {
+    const warning = element('span', 'document-warning-badge', '!');
+    warning.setAttribute('role', 'img');
+    warning.setAttribute('aria-label', 'Indexing warning; details in reader document panel');
+    warning.title = 'Indexing warning';
+    preview.append(warning);
+  }
+  const selectedOpen = element('button', 'document-selected-open', 'Open');
+  selectedOpen.type = 'button'; selectedOpen.hidden = true;
+  selectedOpen.setAttribute('aria-label', `Open ${document.title}`);
+  selectedOpen.addEventListener('click', openReader);
+  preview.append(selectedOpen); card.append(preview);
+  catalogItems.set(document.id, document);
+  updateDocumentSelection(card);
   const star = element('button', 'document-star', document.favorite ? '★' : '☆');
   star.type = 'button'; star.setAttribute('aria-label', document.favorite ? 'Remove from favorites' : 'Add to favorites');
   star.setAttribute('aria-pressed', String(Boolean(document.favorite)));
   star.addEventListener('click', () => documentMutation(document.id, 'favorite', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({favorite: !document.favorite})}));
   card.append(star);
-  const addShelf = element('button', 'document-bookshelf-action', 'Add to bookshelf');
-  addShelf.type = 'button'; addShelf.addEventListener('click', () => window.tomeshedBookshelves?.choose(document));
-  card.append(addShelf);
   if (document.state === 'ready' || document.state === 'ready_with_warning') {
-    const previewAction = element('button', 'document-preview-action', 'Preview');
-    previewAction.type = 'button'; previewAction.setAttribute('aria-label', `Preview ${document.title}`);
-    previewAction.setAttribute('aria-controls', 'previewBubble'); previewAction.setAttribute('aria-expanded', 'false');
-    previewAction.addEventListener('click', () => window.tomeshedPreview.open(document.id, card, preview, previewAction, true));
-    preview.addEventListener('pointermove', event => { if (event.pointerType === 'mouse' || event.pointerType === 'pen') window.tomeshedPreview.open(document.id, card, preview, previewAction, false, event); });
-    card.append(previewAction);
+    open.setAttribute('aria-controls', 'previewBubble'); open.setAttribute('aria-expanded', 'false');
+    open.addEventListener('focus', () => window.tomeshedPreview.scheduleFocus(document.id, card, preview, open));
+    open.addEventListener('blur', () => window.tomeshedPreview.cancelFocus());
+    preview.addEventListener('pointermove', event => { if (event.pointerType === 'mouse' || event.pointerType === 'pen') window.tomeshedPreview.scheduleHover(document.id, card, preview, open, event); });
+    preview.addEventListener('pointerleave', () => window.tomeshedPreview.cancelHover());
+    let holdTimer = null;
+    let holdStart = null;
+    const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; holdStart = null; };
+    open.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch') return;
+      cancelHold();
+      suppressTouchClick = false;
+      holdStart = {x: event.clientX, y: event.clientY};
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (!card.isConnected || window.document.body.classList.contains('reader-open')) return;
+        suppressTouchClick = true;
+        window.tomeshedPreview.open(document.id, card, preview, open, true);
+      }, 800);
+    });
+    open.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch' && holdStart &&
+          Math.hypot(event.clientX - holdStart.x, event.clientY - holdStart.y) > 12) cancelHold();
+    });
+    open.addEventListener('pointerup', () => { cancelHold(); setTimeout(() => { suppressTouchClick = false; }, 500); });
+    open.addEventListener('pointercancel', cancelHold);
+    open.addEventListener('contextmenu', event => {
+      if (holdStart || suppressTouchClick) event.preventDefault();
+    });
   }
   const copy = element('div', 'document-copy');
-  copy.append(element('h3', '', document.title), element('p', '', document.author));
-  const chips = element('div', 'document-tags'); document.tags.forEach(tag => chips.append(element('span', 'tag-chip', tag))); copy.append(chips);
-  if (document.state === 'ready_with_warning') copy.append(element('span', 'index-warning', 'Indexing warning'));
+  copy.append(element('h3', '', document.title));
   card.append(copy);
-  const info = element('button', 'document-info-button', '⋮');
-  info.type = 'button'; info.setAttribute('aria-label', `Info for ${document.title}`);
-  info.setAttribute('aria-expanded', 'false');
-  const panel = element('div', 'document-info'); panel.hidden = true;
+  return card;
+}
+function renderDocumentInfo(document) {
+  const content = element('div', 'document-info');
+  content.append(element('h3', '', document.title), element('p', 'reader-document-author', document.author));
+  const tags = element('div', 'document-tags');
+  document.tags.forEach(tag => tags.append(element('span', 'tag-chip', tag)));
+  content.append(tags);
+  const addShelf = element('button', 'document-bookshelf-action', 'Add to bookshelf');
+  addShelf.type = 'button'; addShelf.addEventListener('click', () => window.tomeshedBookshelves?.choose(document));
+  content.append(addShelf);
   for (const [name, value] of [['Original filename', document.original_filename], ['Stored filename', document.stored_filename], ...(document.source_url ? [['Source URL', document.source_url]] : []), ['Source type', document.source_type.toUpperCase()], ['Size', `${document.byte_size} bytes`], ['Page count', `${document.page_count ?? 'Unknown'} (${document.count_kind})`], ['Imported', new Date(document.created_at * 1000).toLocaleString()], ['Import state', document.state], ['Reading state', document.reading_state.replace('_', ' ')], ['Last read', document.last_read_at ? new Date(document.last_read_at * 1000).toLocaleString() : 'Never']]) {
     const line = element('p'); line.append(element('strong', '', `${name}: `));
-    line.append(documentNode(value)); panel.append(line);
+    if (name === 'Reading state') line.dataset.readerField = 'reading-state';
+    if (name === 'Last read') line.dataset.readerField = 'last-read';
+    line.append(element('span', '', value)); content.append(line);
   }
   const edit = element('form', 'document-metadata-edit');
   const titleLabel = element('label', '', 'Title'); const titleInput = window.document.createElement('input'); titleInput.name = 'title'; titleInput.value = document.title; titleInput.maxLength = 300; titleLabel.append(titleInput);
   const authorLabel = element('label', '', 'Author'); const authorInput = window.document.createElement('input'); authorInput.name = 'author'; authorInput.value = document.author; authorInput.maxLength = 300; authorLabel.append(authorInput);
   const save = element('button', 'secondary', 'Save metadata'); save.type = 'submit'; edit.append(titleLabel, authorLabel, save);
-  edit.addEventListener('submit', event => { event.preventDefault(); documentMutation(document.id, 'metadata', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: titleInput.value, author: authorInput.value})}); }); panel.append(edit);
+  edit.addEventListener('submit', event => { event.preventDefault(); documentMutation(document.id, 'metadata', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: titleInput.value, author: authorInput.value})}); }); content.append(edit);
   const tagEditor = element('form', 'document-tag-editor'); const tagInput = window.document.createElement('input'); tagInput.placeholder = 'Add tag'; tagInput.setAttribute('aria-label', 'Add tag'); tagInput.maxLength = 64;
   const tagSave = element('button', 'secondary', 'Add tag'); tagSave.type = 'submit'; tagEditor.append(tagInput, tagSave);
-  tagEditor.addEventListener('submit', event => { event.preventDefault(); const value = tagInput.value; documentMutation(document.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag: value})}); }); panel.append(tagEditor);
+  tagEditor.addEventListener('submit', event => { event.preventDefault(); const value = tagInput.value; documentMutation(document.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag: value})}); }); content.append(tagEditor);
   const attached = element('div', 'document-tag-editor');
-  document.tags.forEach(tag => attached.append(tagButton(`${tag} ×`, () => documentMutation(document.id, 'tags', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})})))); panel.append(attached);
+  document.tags.forEach(tag => attached.append(tagButton(`${tag} ×`, () => documentMutation(document.id, 'tags', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})})))); content.append(attached);
   const suggestions = element('div', 'document-tag-suggestions');
   availableTags.filter(tag => !document.tags.some(attached => attached.toLocaleLowerCase() === tag.toLocaleLowerCase())).forEach(tag => suggestions.append(tagButton(tag, () => documentMutation(document.id, 'tags', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tag})}))));
-  panel.append(suggestions);
-  if (document.error) panel.append(element('p', 'index-warning', document.error));
+  content.append(suggestions);
+  if (document.error) content.append(element('p', 'index-warning', document.error));
   if (document.state === 'ready_with_warning') {
     const retry = element('button', 'secondary', 'Retry indexing'); retry.type = 'button';
-    retry.addEventListener('click', async () => { try { await api(`/api/documents/${encodeURIComponent(document.id)}/retry`, {method: 'POST'}); await refreshLibrary(); await loadImportJobs(); } catch (error) { showLibraryError(error.message); } });
-    panel.append(retry);
+    retry.addEventListener('click', async () => { try { await api(`/api/documents/${encodeURIComponent(document.id)}/retry`, {method: 'POST'}); const updated = await api(`/api/documents/${encodeURIComponent(document.id)}`); window.tomeshedReader.updateDocument(updated); await refreshLibrary(); } catch (error) { window.tomeshedReader.panelError(document.id, `Retry indexing failed: ${error.message}`); } });
+    content.append(retry);
   }
   if (document.source_available) {
     const original = element('a', 'document-export', `Download original (${document.source_type.toUpperCase()})`);
     original.href = `/api/documents/${encodeURIComponent(document.id)}/export/original`;
-    panel.append(original);
+    content.append(original);
   }
   if (document.structured_available) {
     const structured = element('a', 'document-export', 'Download Docling JSON');
     structured.href = `/api/documents/${encodeURIComponent(document.id)}/export/docling`;
-    panel.append(structured);
+    content.append(structured);
   }
   const renameForm = element('form', 'source-rename-form');
   const renameLabel = element('label', '', 'Stored filename');
@@ -315,83 +419,116 @@ function renderDocument(document) {
   const renameButton = element('button', '', 'Rename file'); renameButton.type = 'submit';
   renameForm.append(renameLabel, renameButton);
   renameForm.addEventListener('submit', async event => { event.preventDefault(); await documentMutation(document.id, 'rename-file', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: renameInput.value})}); });
-  panel.append(renameForm);
+  content.append(renameForm);
   if (document.can_manage_visibility) {
     const visibilityLabel = element('label', 'document-visibility', 'Visibility');
     const visibilityInput = window.document.createElement('select');
     for (const value of ['public', 'private']) { const option = window.document.createElement('option'); option.value = value; option.textContent = value; visibilityInput.append(option); }
     visibilityInput.value = document.visibility;
     visibilityInput.addEventListener('change', () => documentMutation(document.id, 'visibility', {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visibility:visibilityInput.value})}));
-    visibilityLabel.append(visibilityInput); panel.append(visibilityLabel);
+    visibilityLabel.append(visibilityInput); content.append(visibilityLabel);
   }
   const removeButton = element('button', 'danger', 'Remove document'); removeButton.type = 'button';
   removeButton.addEventListener('click', async () => {
     if (!confirm(`Remove ${document.title}?`)) return;
-    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); await refreshLibrary(); }
-    catch (error) { showLibraryError(`Could not remove ${document.title}: ${error.message}`); }
-  }); panel.append(removeButton);
-  info.addEventListener('click', () => { panel.hidden = !panel.hidden; info.setAttribute('aria-expanded', String(!panel.hidden)); });
-  panel.addEventListener('keydown', event => { if (event.key === 'Escape') { panel.hidden = true; info.setAttribute('aria-expanded', 'false'); info.focus(); } });
-  card.append(info, panel);
-  return card;
+    try { await api(`/api/documents/${encodeURIComponent(document.id)}`, {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: document.title})}); window.tomeshedReader.close(); await refreshLibrary(); showLibraryNotice(`${document.title} was removed.`); }
+    catch (error) { window.tomeshedReader.panelError(document.id, `Could not remove ${document.title}: ${error.message}`); }
+  }); content.append(removeButton);
+  return content;
 }
-function documentNode(value) { return window.document.createTextNode(String(value)); }
 function showLibraryError(message) { $('libraryError').textContent = message; $('libraryError').hidden = false; }
-async function loadCatalog(append = false, preserve = false) {
+function showLibraryNotice(message) { $('libraryNotice').textContent = message; $('libraryNotice').hidden = false; }
+function catalogKey(item) { return `${item.kind}:${item.id}`; }
+function cardKey(card) { return card.dataset.bookshelfId ? `bookshelf:${card.dataset.bookshelfId}` : `document:${card.dataset.documentId}`; }
+function renderCatalogItem(item) {
+  if (item.kind === 'bookshelf') return window.tomeshedBookshelves.card(item);
+  catalogItems.set(item.id, item);
+  return renderDocument(item);
+}
+function updateCatalogNavigation() {
+  const endless = catalogPageSize === 'endless';
+  const pages = Math.max(1, Math.ceil(catalogTotal / catalogEffectivePageSize));
+  $('catalogPager').hidden = endless || catalogTotal === 0;
+  $('pagerInfo').textContent = `Page ${catalogPage + 1} of ${pages} · ${catalogTotal} ${catalogTotal === 1 ? 'result' : 'results'}`;
+  $('pagerFirst').disabled = $('pagerPrev').disabled = catalogPage === 0;
+  $('pagerNext').disabled = $('pagerLast').disabled = catalogPage >= pages - 1;
+  $('catalogEndlessStatus').hidden = !endless || catalogTotal === 0;
+  $('catalogSentinel').hidden = !endless || catalogLoaded >= catalogTotal;
+  if (endless && catalogTotal) $('catalogEndlessStatus').textContent =
+    catalogLoading ? 'Loading more results…' : catalogLoaded >= catalogTotal ? `All ${catalogTotal} results loaded.` : `${catalogLoaded} of ${catalogTotal} results loaded.`;
+}
+function loadVisibleEndless() {
+  if (library.hidden || catalogPageSize !== 'endless' || catalogLoading || catalogLoaded >= catalogTotal) return;
+  const bounds = $('catalogSentinel').getBoundingClientRect();
+  if (bounds.top <= innerHeight + 400 && bounds.bottom >= -400) loadCatalog(true);
+}
+async function loadCatalog(append = false, preserve = false, requestedPage = null) {
   if (pendingCatalogMutation && preserve) { deferredCatalogRefresh = true; return; }
+  if (append && (catalogPageSize !== 'endless' || catalogLoading || catalogLoaded >= catalogTotal)) return;
+  catalogFiltersLabel();
   const generation = ++catalogGeneration;
   const signature = catalogParams(0).toString();
-  const offset = append && signature === catalogSignature ? catalogOffset : 0;
+  const sameQuery = signature === catalogSignature;
+  if (!preserve || !sameQuery) catalogPage = 0;
+  if (requestedPage !== null) catalogPage = requestedPage;
+  const endless = catalogPageSize === 'endless';
+  const limit = endless ? 50 : Number(catalogPageSize);
+  const offset = endless ? (append && sameQuery ? catalogLoaded : 0) : catalogPage * catalogEffectivePageSize;
+  catalogLoading = true;
+  if (endless && catalogTotal) { $('catalogEndlessStatus').hidden = false; $('catalogEndlessStatus').textContent = 'Loading more results…'; }
   try {
-    let data = await api(`/api/documents?${catalogParams(preserve || append ? 0 : offset)}`);
+    let data = await api(`/api/documents?${catalogParams(offset, limit)}`);
     if (generation !== catalogGeneration) return;
+    if (!endless && offset >= data.total && data.total > 0) {
+      catalogPage = Math.ceil(data.total / data.limit) - 1;
+      data = await api(`/api/documents?${catalogParams(catalogPage * data.limit, limit)}`);
+      if (generation !== catalogGeneration) return;
+    }
+    let items = [...data.items];
+    if (endless && preserve && sameQuery && !append) {
+      const target = Math.min(data.total, Math.max(limit, catalogLoaded));
+      const oldIds = [...$('documentGrid').children].map(cardKey);
+      while (items.length < data.total && (items.length < target || oldIds.some(id => !items.some(item => catalogKey(item) === id)))) {
+        const more = await api(`/api/documents?${catalogParams(items.length, limit)}`);
+        if (generation !== catalogGeneration) return;
+        if (!more.items.length) break;
+        items.push(...more.items);
+      }
+    }
     catalogSignature = signature;
-    if (append && offset > 0) {
-      const seen = new Set([...$('documentGrid').children].map(card => card.dataset.documentId));
-      const additions = data.documents.filter(item => !seen.has(item.id));
-      let nextOffset = data.documents.length;
-      while (additions.length < data.limit && nextOffset < data.total) {
-        const page = await api(`/api/documents?${catalogParams(nextOffset)}`);
-        if (generation !== catalogGeneration) return;
-        additions.push(...page.documents.filter(item => !seen.has(item.id)));
-        nextOffset += page.documents.length;
-        if (!page.documents.length) break;
-      }
-      additions.slice(0, data.limit).forEach(item => { catalogItems.set(item.id, item); $('documentGrid').append(renderDocument(item)); });
-      catalogOffset = $('documentGrid').children.length;
-    } else if (preserve && $('documentGrid').children.length) {
-      const oldIds = [...$('documentGrid').children].map(card => card.dataset.documentId);
-      const all = [...data.documents]; let nextOffset = all.length;
-      while (nextOffset < data.total && oldIds.some(id => !all.some(item => item.id === id))) {
-        const page = await api(`/api/documents?${catalogParams(nextOffset)}`);
-        if (generation !== catalogGeneration) return;
-        all.push(...page.documents); nextOffset += page.documents.length;
-        if (!page.documents.length) break;
-      }
-      const byId = new Map(all.map(item => [item.id, item]));
-      const ordered = oldIds.filter(id => byId.has(id)).map(id => byId.get(id));
-      const newItems = all.filter(item => !oldIds.includes(item.id)).slice(0, Math.max(1, catalogOffset - ordered.length + 1));
-      const focusedId = document.activeElement?.closest('.document-card')?.dataset.documentId;
-      const focusedClass = document.activeElement?.className;
-      const openInfoIds = [...$('documentGrid').querySelectorAll('.document-card')].filter(card => !card.querySelector('.document-info').hidden).map(card => card.dataset.documentId);
-      window.tomeshedPreview.close(); $('documentGrid').replaceChildren(...[...ordered, ...newItems].map(item => { catalogItems.set(item.id, item); return renderDocument(item); }));
-      openInfoIds.forEach(id => { const card = document.querySelector(`.document-card[data-document-id="${CSS.escape(id)}"]`); if (card) { card.querySelector('.document-info').hidden = false; card.querySelector('.document-info-button').setAttribute('aria-expanded', 'true'); } });
-      if (focusedId && focusedClass) document.querySelector(`.document-card[data-document-id="${CSS.escape(focusedId)}"] .${String(focusedClass).split(' ')[0]}`)?.focus();
-      catalogOffset = Math.min(data.total, ordered.length + newItems.length);
+    catalogTotal = data.total;
+    if (!endless) catalogEffectivePageSize = data.limit;
+    if (append && sameQuery) {
+      const seen = new Set([...$('documentGrid').children].map(cardKey));
+      items.filter(item => !seen.has(catalogKey(item))).forEach(item => $('documentGrid').append(renderCatalogItem(item)));
+      catalogLoaded = offset + data.items.length;
     } else {
-      if (!append || offset === 0) { window.tomeshedPreview.close(); $('documentGrid').replaceChildren(); catalogItems.clear(); }
-      data.documents.forEach(item => { catalogItems.set(item.id, item); $('documentGrid').append(renderDocument(item)); });
-      catalogOffset = offset + data.documents.length;
+      if (preserve && sameQuery) {
+        const oldIds = [...$('documentGrid').children].map(cardKey);
+        const byId = new Map(items.map(item => [catalogKey(item), item]));
+        items = [...oldIds.filter(id => byId.has(id)).map(id => byId.get(id)),
+          ...items.filter(item => !oldIds.includes(catalogKey(item)))];
+      }
+      const focusedId = preserve ? document.activeElement?.closest('.document-card')?.dataset.documentId : null;
+      const focusedClass = document.activeElement?.className;
+      window.tomeshedPreview.close(); catalogItems.clear();
+      $('documentGrid').replaceChildren(...items.map(renderCatalogItem));
+      if (selectedDocumentId && !$('documentGrid').querySelector(`.document-card[data-document-id="${CSS.escape(selectedDocumentId)}"]`)) selectedDocumentId = null;
+      if (focusedId && focusedClass) document.querySelector(`.document-card[data-document-id="${CSS.escape(focusedId)}"] .${String(focusedClass).split(' ')[0]}`)?.focus({preventScroll: true});
+      catalogLoaded = endless ? items.length : offset + items.length;
     }
     renderTagFilters(data.available_tags || []); catalogFiltersLabel();
-    $('libraryCount').textContent = `${data.library_total} ${data.library_total === 1 ? 'document' : 'documents'}`;
-    $('loadMoreDocuments').hidden = catalogOffset >= data.total;
+    $('libraryCount').textContent = `${data.total} ${data.total === 1 ? 'result' : 'results'}`;
     $('libraryEmpty').hidden = data.total !== 0;
-    const filtered = signature !== new URLSearchParams({q: '', offset: '0', type: '', author: '', favorite: '', reading_state: '', tag_mode: 'ALL', sort: 'newest'}).toString();
-    $('libraryEmptyTitle').textContent = filtered ? 'No matching documents' : 'No books or PDFs yet';
-    $('libraryEmptyText').textContent = filtered ? 'Clear filters or try another search.' : 'Add a PDF, EPUB, or DoclingDocument JSON file to start your library.';
+    const filtered = Boolean($('librarySearch').value.trim() || $('filterScope').value !== 'all' || $('filterType').value ||
+      $('filterAuthor').value.trim() || $('filterFavorite').value || $('filterReading').value ||
+      document.querySelector('#filterTags input:checked'));
+    $('libraryEmptyTitle').textContent = filtered ? ($('filterScope').value === 'bookshelves' ? 'No matching bookshelves' : 'No matching documents') : 'No books or PDFs yet';
+    $('libraryEmptyText').textContent = hasActiveCatalogFilters() ? 'Clear filters or try another search.' :
+      filtered ? 'Try another search.' : 'Add a PDF, EPUB, or DoclingDocument JSON file to start your library.';
     $('libraryError').hidden = true;
-  } catch (error) { showLibraryError(`Could not load library: ${error.message}`); }
+  } catch (error) { if (generation === catalogGeneration) showLibraryError(`Could not load library: ${error.message}`); }
+  finally { if (generation === catalogGeneration) { catalogLoading = false; updateCatalogNavigation(); requestAnimationFrame(loadVisibleEndless); } }
 }
 async function loadImportJobs() {
   try {
@@ -421,11 +558,73 @@ async function loadImportJobs() {
 }
 async function refreshLibrary(preserve = false) { await Promise.all([loadCatalog(false, preserve), loadImportJobs()]); }
 $('librarySearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadCatalog(), 140); });
-$('filtersToggle').addEventListener('click', () => { const panel = $('catalogFilters'); panel.hidden = !panel.hidden; $('filtersToggle').setAttribute('aria-expanded', String(!panel.hidden)); });
-for (const id of ['filterType', 'filterFavorite', 'filterReading', 'filterTagMode', 'catalogSort']) $(id).addEventListener('change', () => loadCatalog());
+function closeCatalogFilters(returnFocus = false) {
+  const panel = $('catalogFilters');
+  if (panel.hidden) return;
+  panel.hidden = true;
+  $('filtersToggle').setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('filtersToggle').focus();
+}
+function closeCatalogSort(returnFocus = false) {
+  const panel = $('catalogSort');
+  if (panel.hidden) return;
+  panel.hidden = true;
+  $('sortToggle').setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('sortToggle').focus();
+}
+function updateSortLabel() {
+  const favorite = $('sortField').value === 'favorite';
+  $('sortDirection').options[0].textContent = favorite ? 'Favorites last' : 'Ascending';
+  $('sortDirection').options[1].textContent = favorite ? 'Favorites first' : 'Descending';
+  $('sortToggle').setAttribute('aria-label', `Sort: ${$('sortField').selectedOptions[0].textContent}, ${$('sortDirection').selectedOptions[0].textContent}`);
+}
+$('sortToggle').addEventListener('click', () => {
+  const panel = $('catalogSort');
+  if (!panel.hidden) { closeCatalogSort(); return; }
+  closeCatalogFilters();
+  panel.hidden = false;
+  $('sortToggle').setAttribute('aria-expanded', 'true');
+  $('sortField').focus();
+});
+$('filtersToggle').addEventListener('click', () => {
+  const panel = $('catalogFilters');
+  if (!panel.hidden) { closeCatalogFilters(); return; }
+  closeCatalogSort();
+  panel.hidden = false;
+  $('filtersToggle').setAttribute('aria-expanded', 'true');
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('catalogSort').hidden) {
+    event.preventDefault();
+    closeCatalogSort(true);
+    return;
+  }
+  if (event.key === 'Escape' && !$('catalogFilters').hidden) {
+    event.preventDefault();
+    closeCatalogFilters(true);
+  }
+});
+document.addEventListener('click', event => {
+  if (!$('catalogSort').hidden && !$('catalogSort').contains(event.target) && !$('sortToggle').contains(event.target)) {
+    closeCatalogSort(!event.target.closest('button, input, select, textarea, a, [tabindex]'));
+  }
+  if (!$('catalogFilters').hidden && !$('catalogFilters').contains(event.target) && !$('filtersToggle').contains(event.target)) {
+    closeCatalogFilters(!event.target.closest('button, input, select, textarea, a, [tabindex]'));
+  }
+});
+for (const id of ['filterScope', 'filterType', 'filterFavorite', 'filterReading', 'filterTagMode']) $(id).addEventListener('change', () => loadCatalog());
+for (const id of ['sortField', 'sortDirection']) $(id).addEventListener('change', () => { updateSortLabel(); loadCatalog(); });
+updateSortLabel();
 $('filterAuthor').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadCatalog(), 140); });
-$('clearFilters').addEventListener('click', () => { $('librarySearch').value = ''; $('filterType').value = ''; $('filterAuthor').value = ''; $('filterFavorite').value = ''; $('filterReading').value = ''; $('filterTagMode').value = 'ALL'; document.querySelectorAll('#filterTags input').forEach(input => { input.checked = false; }); loadCatalog(); });
-$('loadMoreDocuments').addEventListener('click', () => loadCatalog(true));
+$('clearFilters').addEventListener('click', () => { clearTimeout(searchTimer); $('filterScope').value = 'all'; $('filterType').value = ''; $('filterAuthor').value = ''; $('filterFavorite').value = ''; $('filterReading').value = ''; $('filterTagMode').value = 'ALL'; document.querySelectorAll('#filterTags input').forEach(input => { input.checked = false; }); closeCatalogFilters(true); loadCatalog(); });
+for (const [id, target] of [['pagerFirst', () => 0], ['pagerPrev', () => catalogPage - 1],
+  ['pagerNext', () => catalogPage + 1], ['pagerLast', () => Math.ceil(catalogTotal / catalogEffectivePageSize) - 1]]) {
+  $(id).addEventListener('click', () => loadCatalog(false, true, target()));
+}
+const catalogObserver = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting && !library.hidden && !catalogLoading && catalogPageSize === 'endless' && catalogLoaded < catalogTotal) loadCatalog(true);
+}, {rootMargin: '400px'});
+catalogObserver.observe($('catalogSentinel'));
 $('importsButton').addEventListener('click', () => { const drawer = $('importsDrawer'); drawer.hidden = !drawer.hidden; $('importsButton').setAttribute('aria-expanded', String(!drawer.hidden)); if (!drawer.hidden) $('closeImports').focus(); });
 $('closeImports').addEventListener('click', () => { $('importsDrawer').hidden = true; $('importsButton').setAttribute('aria-expanded', 'false'); $('importsButton').focus(); });
 const activeTransfers = new Map();
@@ -475,12 +674,16 @@ document.addEventListener('dragover', event => { if (!fileDrag(event)) return; e
 document.addEventListener('dragleave', event => { if (event.relatedTarget == null) dragDepth = 0; else dragDepth = Math.max(0, dragDepth-1); if (!dragDepth) dropTarget.hidden = true; });
 document.addEventListener('drop', event => { if (!fileDrag(event)) return; event.preventDefault(); dragDepth=0; dropTarget.hidden = true; importFiles([...(event.dataTransfer.files || [])], true); });
 if ($('bulkClearButton')) $('bulkClearButton').addEventListener('click', async () => {
+  const button = $('bulkClearButton');
+  button.disabled = true;
   try {
     const preview = await api('/api/library/clear/preview');
     if (!confirm(`Remove ${preview.document_count} documents and ${preview.file_count} managed files?`)) return;
     await api('/api/library/clear', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:preview.token})});
     await refreshLibrary();
-  } catch (error) { showLibraryError(`Library clear failed: ${error.message}`); }
+    showSuccess(`Library cleared: ${preview.document_count} documents removed.`);
+  } catch (error) { showError(`Library clear failed: ${error.message}`); }
+  finally { button.disabled = false; }
 });
 if (window.EventSource) {
   const eventStream = new EventSource('/api/events');
@@ -488,4 +691,4 @@ if (window.EventSource) {
   eventStream.addEventListener('change', () => { refreshLibrary(true); window.tomeshedBookshelves?.refresh(); });
 }
 refreshLibrary();
-window.tomeshedCatalog = {readerState(id, item) { catalogItems.set(id, item); loadCatalog(false, true); }, refresh: refreshLibrary};
+window.tomeshedCatalog = {readerState(id, item) { catalogItems.set(id, item); loadCatalog(false, true); }, refresh: refreshLibrary, renderDocumentInfo};

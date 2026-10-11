@@ -1,6 +1,6 @@
 # Bug 0008 — Settings Back uses a text arrow instead of the VDL chevron
 
-**Status:** Open
+**Status:** Resolved in `0.2.6`
 
 ## Observed behavior
 
@@ -18,10 +18,12 @@ Use a drawn left-pointing chevron with VDL's button size, hover treatment, and v
 
 `templates/index.html` renders a Unicode arrow. `static/styles.css` gives `.settings-back` a square border. `VDL/templates/index.html` uses `i-chevron`; `VDL/static/styles.css` rotates that symbol 90 degrees for the Settings Back control.
 
-## Proposed resolution
+## Resolution
 
-Use a small inline SVG chevron and adapt VDL's `.settings-back` styling to Tomeshed's theme variables. Do not depend on a font glyph for arrow shape.
+`templates/index.html` now draws the Back chevron with an inline SVG. `static/styles.css` gives the control VDL's 40 px round shape, 20 px icon, transparent resting state, hover treatment, and visible keyboard outline with Tomeshed's theme variables. At narrow widths, Settings starts below the wrapped app header so the control remains visible. The existing `Return to library` name and Back event handler remain in place.
 
 ## Verification
 
-**not_run** — Documentation only. Compare light and dark desktop and mobile screenshots with VDL. Activate Back by pointer and keyboard, and inspect its accessible name and focus ring.
+**passed** — `.venv/bin/python tests/browser_check_settings_back.py` exited with code 0. The check covered 390 px and 1280 px widths in light and dark themes. For each combination, it verified the SVG and accessible name, 40 px control and 20 px icon, hover state, focus outline, header clearance, and Back activation by Enter and pointer. Screenshots and `checks.json` are in `/tmp/tomeshed-bug-0008-browser/`. Before the code change, the focused check failed because the button lacked an SVG; before the narrow spacing change, the header clearance assertion failed.
+
+**passed** — `.venv/bin/python tests/browser_check.py` exited with code 0, including Settings navigation, theme, viewport, and scrolling checks.

@@ -129,6 +129,19 @@ class BookshelfService:
                 WHERE s.bookshelf_id=? ORDER BY u.username''',(shelf['id'],))]
         return result
 
+    def catalog_items(self, conn, user_id):
+        """Return authorized shelf cards with viewer-visible preview data only."""
+        rows = conn.execute('''SELECT b.* FROM bookshelves b WHERE b.owner_user_id=?
+            UNION SELECT b.* FROM bookshelves b JOIN bookshelf_shares s ON s.bookshelf_id=b.id
+            WHERE s.user_id=?''', (user_id, user_id)).fetchall()
+        items = []
+        for row in rows:
+            detail = self._detail(conn, row, user_id)
+            items.append({key: detail[key] for key in (
+                'id', 'name', 'owned', 'owner_user_id', 'count', 'covers', 'continue_document_id'
+            )} | {'kind': 'bookshelf', 'created_at': row['created_at'], 'favorite': False})
+        return items
+
     def _valid_members(self, conn, shelf_id, values, user_id):
         if not isinstance(values, list):
             raise ValueError('Members must be a list')

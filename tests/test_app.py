@@ -144,7 +144,7 @@ def test_concurrent_admin_suspensions_keep_one_active_admin(app_module, monkeypa
 def test_preferences_secret_and_session_survive_reinitialization(app_module):
     client = app_module.app.test_client()
     setup_admin(client)
-    assert client.patch("/api/preferences", json={"theme": "dark"}).json == {"theme": "dark"}
+    assert client.patch("/api/preferences", json={"theme": "dark"}).json == {"theme": "dark", "page_size": "10"}
     with app_module.db() as conn:
         before = conn.execute("SELECT value FROM app_config WHERE key = 'secret_key'").fetchone()[0]
         user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -152,12 +152,28 @@ def test_preferences_secret_and_session_survive_reinitialization(app_module):
     app_module.init_db()
     assert app_module.app.secret_key == before
     assert client.get("/api/me").status_code == 200
-    assert client.get("/api/preferences").json == {"theme": "dark"}
+    assert client.get("/api/preferences").json == {"theme": "dark", "page_size": "10"}
     with app_module.db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == user_count
     client.post("/logout")
     client.post("/login", data={"username": "admin", "password": "secret-password"})
-    assert client.get("/api/preferences").json == {"theme": "dark"}
+    assert client.get("/api/preferences").json == {"theme": "dark", "page_size": "10"}
+
+
+def test_existing_theme_preference_gains_default_page_size(tmp_path, monkeypatch):
+    database = tmp_path / "legacy.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE preferences (user_id INTEGER PRIMARY KEY, theme TEXT NOT NULL)")
+        conn.execute("INSERT INTO preferences(user_id, theme) VALUES (1, 'dark')")
+    monkeypatch.setenv("TOMESHED_DB", str(database))
+    import tomeshed
+    module = importlib.reload(tomeshed)
+    client = module.app.test_client()
+    setup_admin(client)
+    assert client.get("/api/preferences").json == {"theme": "dark", "page_size": "10"}
+    assert client.patch("/api/preferences", json={"page_size": "50"}).json == {"theme": "dark", "page_size": "50"}
+    module.init_db()
+    assert client.get("/api/preferences").json == {"theme": "dark", "page_size": "50"}
 
 
 def test_cross_site_mutations_and_cookie_attributes(app_module):

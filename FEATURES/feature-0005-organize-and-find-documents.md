@@ -19,27 +19,27 @@ Let a signed-in user organize catalog documents with tags and favorites, correct
 
 ## Organization and metadata
 
-- Let any active signed-in user who may open a document add and remove its tags in the Info menu.
-- Show attached tags on the card. Suggest tags already attached to documents the current user may open.
+- Let any active signed-in user who may open a document add and remove its tags in the reader document panel.
+- Show attached tags in the reader document panel. Suggest tags already attached to documents the current user may open.
 - Normalize a new tag by trimming its ends and collapsing repeated whitespace. Compare tag names without regard to letter case.
 - Reject an empty tag name, control characters, commas, or a name longer than 64 characters.
 - Reuse an existing tag when its normalized name matches. Preserve the spelling from that tag's first creation.
 - Remove a tag from suggestions when no accessible document uses it. Keep its associations with other documents when a user removes the tag from one document.
 - Show an `Add to favorites` or `Remove from favorites` star button on each card. Match its accessible name and `aria-pressed` value to the saved state, and show visible keyboard focus. Do not open the reader when the star is activated.
-- Let any active signed-in user who may open a document correct its displayed title and author in the Info menu.
+- Let any active signed-in user who may open a document correct its displayed title and author in the reader document panel.
 - Store corrected title and author values separately from source-derived metadata. Keep the source bytes and original filename unchanged.
-- Use corrected title and author values on cards, in Info, and in search results.
-- Show the original filename, source type, byte size, page count and its `exact`, `estimated`, or `unknown` basis, import time, and import state in Info. Show the current user's last-read date when a successful reader open has been recorded. Keep Feature 0002's indexing warning visible for `ready_with_warning` documents.
+- Use the corrected title on cards. Use corrected title and author values in the reader document panel and in search results.
+- Show the original filename, source type, byte size, page count and its `exact`, `estimated`, or `unknown` basis, import time, and import state in the reader document panel. Show the current user's last-read date when a successful reader open has been recorded. Keep Feature 0002's indexing warning visible for `ready_with_warning` documents.
 - Store tags, favorites, and corrected metadata in SQLite under the document ID. Preserve these values when Docling extraction is retried or a document is reindexed.
 - Send organization and metadata changes through authenticated document-ID routes. Check document access on the server before returning or changing those values.
-- If a mutation fails, show its error and restore the displayed value to the last confirmed server state.
+- If a mutation fails, show its error in the reader document panel without closing the reader. Keep the last confirmed card and server values; preserve the panel input so the user can correct or retry it.
 
 ## Reading state
 
 - Record a reader open for the current user and document only after Feature 0003's reader successfully displays source content. Set that user's last-read time on each successful open.
 - Derive `unread` when the user has no successful reader-open record and has not marked the document finished. Derive `finished` when the user's completion state is set. Derive `in progress` for every other document the user has opened.
 - Show a `new` badge on a card only while its reading state is `unread`. Opening the reader removes that user's badge. Feature 0003's `Mark finished` sets `finished`; `Start over` clears completion and leaves an already opened document `in progress`.
-- Do not record a reader open, change last-read time, or change reading state when the user views Feature 0004's hover preview, opens Info, searches, or downloads the source file.
+- Do not record a reader open, change last-read time, or change reading state when the user views Feature 0004's hover preview, searches, or downloads the source file. Opening the reader document panel is a reader open.
 - Keep reader-open records, last-read time, and completion state keyed by user ID and document ID. Do not expose one user's last-read time or reading state as another user's state.
 
 ## Search, filters, and ordering
@@ -58,10 +58,10 @@ Let a signed-in user organize catalog documents with tags and favorites, correct
 | --- | --- | --- |
 | AC-01 | `History` and `history` attach one reusable tag to two documents while displaying the first spelling. Removing the tag from one document leaves it on the other. Removing its final association removes it from suggestions. Invalid or overlong tag names are rejected. | Backend tag validation and association tests; browser tag and suggestion checks. |
 | AC-02 | A favorite star updates its accessible name, `aria-pressed` value, and displayed state after a confirmed save. The state survives a reload and application restart. A rejected save shows an error and restores the confirmed state. Activating the star does not open the reader. | Backend persistence and rejected-mutation tests; browser pointer and keyboard checks. |
-| AC-03 | A corrected title and author appear on the card, in Info, and in search results after a restart. The preserved source bytes and original filename do not change. A failed edit leaves the confirmed values visible and shows an error. | Backend metadata and source-file tests; browser Info and search checks. |
-| AC-04 | Info shows the original filename, source type, byte size, import time and state, and page count with its correct basis. A `ready_with_warning` document still shows its indexing warning. The current user's last-read date appears after a successful reader open. | Browser Info checks with exact, estimated, unknown, and warning fixtures. |
+| AC-03 | A corrected title appears on the card. Corrected title and author appear in the reader document panel and search results after a restart. The preserved source bytes and original filename do not change. A failed edit keeps the confirmed card title, preserves the panel input, and shows an error. | Backend metadata and source-file tests; browser reader panel and search checks. |
+| AC-04 | The reader document panel shows the original filename, source type, byte size, import time and state, and page count with its correct basis. A `ready_with_warning` document still shows its indexing warning. The current user's last-read date appears after a successful reader open. | Browser reader panel checks with exact, estimated, unknown, and warning fixtures. |
 | AC-05 | A user with no successful reader open sees `new` and `unread`. A successful reader open changes that user's state to `in progress` and records last-read time. `Mark finished` changes it to `finished`; `Start over` returns it to `in progress`. A second user's state remains `unread`. | Backend state tests and browser checks with two accounts. |
-| AC-06 | Hover preview, Info, search, and source download leave reader-open records, last-read time, reading state, and saved reading positions unchanged. A reader that fails to open does not create a reader-open record. | Compare records before and after each action; force a reader-open failure. |
+| AC-06 | Hover preview, search, and source download leave reader-open records, last-read time, reading state, and saved reading positions unchanged. A reader that fails to open does not create a reader-open record. | Compare records before and after each action; force a reader-open failure. |
 | AC-07 | Text search finds displayed title, displayed author, original filename, and available extracted text without regard to letter case. A `ready_with_warning` document without extracted text still matches its metadata. | Search tests with corrected metadata, indexed text, and extraction-failure fixtures. |
 | AC-08 | Type, author, favorite, and reading-state filters combine with a text query using AND. Two selected tags match both tags in `ALL` mode and either tag in `ANY` mode. `Clear filters` restores the unfiltered set, and an unmatched search shows an empty-result message. | Backend filter tests and browser control checks with a mixed catalog. |
 | AC-09 | Search and filters run before pagination. The reported total equals the number of authorized matches, each response respects the configured page-size limit, and favorite-first places favorites before other matches while preserving newest-first order within each group. | Backend pagination and ordering tests with more matches than one page. |

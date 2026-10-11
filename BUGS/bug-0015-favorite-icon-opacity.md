@@ -1,6 +1,6 @@
 # Bug 0015 — Favorite icon background obscures light document covers
 
-**Status:** Open
+**Status:** Resolved in `0.2.13`
 
 ## Observed behavior
 
@@ -18,10 +18,12 @@ Use a more translucent background behind the Favorite icon so the cover remains 
 
 `static/styles.css` sets `.document-star` to `background:var(--surface)`, an opaque theme surface. The control overlaps `.document-art` in `static/app.js`.
 
-## Proposed resolution
+## Resolution
 
-Use a theme-aware translucent fill and a restrained border or shadow. Check contrast against white, dark, and busy covers before choosing the final opacity.
+`static/styles.css` now gives the Favorite control a 72% opaque overlay matched to each theme. The border and small shadow separate the control from detailed covers. The unpressed and pressed stars use distinct, high-contrast colors in each theme. The pointer target grew from 38 to 42 pixels; the existing 3-pixel keyboard focus ring remains.
 
 ## Verification
 
-**not_run** — Documentation only. Compare light and dark screenshots with white, dark, and detailed cover fixtures; inspect pressed state, focus ring, and hit target.
+**passed** — Headless Chromium rendered unpressed and pressed stars over white, dark, and patterned covers in both themes. The screenshots at `/tmp/tomeshed_bug0015_light.png` and `/tmp/tomeshed_bug0015_dark.png` were inspected; cover patterns remain visible through the control, and both star states remain legible. Computed styles confirm alpha `0.72`, a 42-by-42-pixel target, and a 3-pixel solid focus ring. Browser hit testing reaches the button at its center.
+
+**passed** — `.venv/bin/python tests/browser_check_organization.py` exited with code 0, including its Favorite state and rollback checks. The card renderer retains the accessible name and `aria-pressed` state. `git diff --check` exited with code 0.
