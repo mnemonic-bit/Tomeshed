@@ -23,3 +23,9 @@ updates:
       labels:
           - dependencies
       open-pull-requests-limit: 5
+      # Review Python minor upgrades together with the lock and validation target.
+      ignore:
+          - dependency-name: python
+            update-types:
+                - version-update:semver-major
+                - version-update:semver-minor

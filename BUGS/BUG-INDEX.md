@@ -51,3 +51,4 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0045 — Preview stays open after the pointer leaves](bug-0045-preview-stays-open-after-pointer-leaves.md) — Open.
 - [Bug 0046 — Library shows a redundant Books and documents heading](bug-0046-remove-books-and-documents-heading.md) — Open.
 - [Bug 0047 — Footer counts and uptime do not match the requested display](bug-0047-footer-document-count-and-uptime.md) — Open.
+- [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.

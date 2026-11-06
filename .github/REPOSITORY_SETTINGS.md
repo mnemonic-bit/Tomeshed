@@ -14,6 +14,8 @@ The `Main` workflow grants `packages: write`, `contents: write`, `attestations: 
 
 Enable the dependency graph, Dependabot alerts, Dependabot security updates, and private vulnerability reporting. Confirm public repository secret scanning and push protection are enabled. Monthly version update pull requests cover Actions and Docker. Update `requirements.txt` and `requirements-container.txt` together in a reviewed pull request; run `tests/container/check-lock.sh` on that change. Do not enable CodeQL default setup alongside `.github/workflows/codeql.yml`.
 
+Keep the container, lock-generation command, platform lock check, and validation workflow on Python 3.12. Dependabot may refresh Python patch releases and image digests; Python minor or major upgrades require a coordinated change to these inputs. Regenerate the complete Python lock when reviewing a package update so transitive requirements, including Docling's Pillow bound, remain satisfied.
+
 ## First package publication
 
 The first passing `Main` run pushes `main` and a full SHA tag, then tests anonymous access before creating `v<VERSION>`, `latest`, the Git tag, and the GitHub Release. A new GHCR package may be private initially. If the anonymous check fails:
