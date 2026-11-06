@@ -1,4 +1,4 @@
-FROM python:3.12.14-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
+FROM python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TOMESHED_DB=/data/tomeshed.db TOMESHED_LIBRARY_DIR=/library HOST=0.0.0.0 PORT=5000
 RUN groupadd --gid 10001 tomeshed && useradd --uid 10001 --gid tomeshed --create-home tomeshed && install -d -o tomeshed -g tomeshed /data /library
 WORKDIR /app
