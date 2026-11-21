@@ -48,7 +48,7 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0042 — Bookshelf preview grows beyond two rows](bug-0042-bookshelf-preview-exceeds-two-rows.md) — Resolved in `0.4.14`.
 - [Bug 0043 — Reader Remove Document uses an emoji trash can](bug-0043-reader-remove-document-trash-icon.md) — Resolved in `0.4.15`.
 - [Bug 0044 — Reader Close button is a bordered text button](bug-0044-reader-close-button-angle-bracket.md) — Resolved in `0.4.16`.
-- [Bug 0045 — Preview stays open after the pointer leaves](bug-0045-preview-stays-open-after-pointer-leaves.md) — Open.
+- [Bug 0045 — Preview stays open after the pointer leaves](bug-0045-preview-stays-open-after-pointer-leaves.md) — Resolved in `0.4.18`.
 - [Bug 0046 — Library shows a redundant Books and documents heading](bug-0046-remove-books-and-documents-heading.md) — Open.
 - [Bug 0047 — Footer counts and uptime do not match the requested display](bug-0047-footer-document-count-and-uptime.md) — Open.
 - [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.

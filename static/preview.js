@@ -32,6 +32,11 @@
     const footer = document.getElementById('versionFooter')?.getBoundingClientRect().top || innerHeight;
     return rect.bottom > header && rect.top < footer && rect.right > 0 && rect.left < innerWidth;
   }
+  function hasKeyboardFocus() {
+    const focused = document.activeElement;
+    return focused?.matches(':focus-visible') &&
+      (active?.card.contains(focused) || bubble.contains(focused));
+  }
   function close(returnFocus = false) {
     cancelHover();
     cancelFocus();
@@ -87,7 +92,7 @@
     bubble.style.setProperty('--preview-pointer-y', `${Math.max(16, Math.min(box.height - 16, anchor.top + anchor.height / 2 - box.top))}px`);
     if (recheckPointer && pointerX !== null && active && active.pointerInside) {
       active.pointerInside = inBridge(pointerX, pointerY);
-      if (!active.pointerInside && !active.card.contains(document.activeElement) && !bubble.contains(document.activeElement)) close();
+      if (!active.pointerInside && !hasKeyboardFocus()) close();
     }
   }
   function showFailure() {
@@ -224,7 +229,7 @@
     pointerX = event.clientX; pointerY = event.clientY;
     if (!active) return;
     active.pointerInside = inBridge(event.clientX, event.clientY);
-    if (!active.pointerInside && !active.card.contains(document.activeElement) && !bubble.contains(document.activeElement)) close();
+    if (!active.pointerInside && !hasKeyboardFocus()) close();
   });
   document.addEventListener('pointerdown', event => {
     cancelHover();
@@ -256,7 +261,7 @@
     pointerX = null; pointerY = null;
     if (!active) return;
     active.pointerInside = false;
-    if (!active.card.contains(document.activeElement) && !bubble.contains(document.activeElement)) close();
+    if (!hasKeyboardFocus()) close();
   });
   document.addEventListener('focusin', event => {
     if (active && !active.pointerInside && !active.card.contains(event.target) && !bubble.contains(event.target)) close();
