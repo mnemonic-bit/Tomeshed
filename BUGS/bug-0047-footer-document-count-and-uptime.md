@@ -18,7 +18,7 @@ The footer shows a count of catalog results rather than the total number of docu
 - With no filter or search applied, show `NNN Documents` in the footer, where `NNN` is the total number of documents held by the library. Exclude bookshelves and count documents across all catalog pages.
 - With a filter or search applied, show `MM Selected of NNN Documents` in the footer. `MM` is the number of documents matching the active query across all pages, including zero matches; `NNN` remains the full document count. In this footer label, `Selected` refers to query matches, not document cards selected for bulk actions. Update the counts after filter, search, import, deletion, or other library changes.
 - Remove the visible `N selected` count from the main library selection actions. Keep the selection controls and their behavior.
-- Keep the footer's connection and version information alongside the document count and uptime.
+- Keep the footer's version information alongside the document count and uptime. [Bug 0050](bug-0050-status-preview-reader-and-internal-filenames.md) supersedes the earlier request to retain routine connection information.
 - Show uptime as one whole-number unit: `N Seconds` below 60 seconds, `N Minutes` from 60 to 3,599 seconds, `N Hours` from 3,600 to 86,399 seconds, and `N Day` or `N Days` from 86,400 seconds onward. Use the singular form when the displayed value is one. Advance the display as time passes between health checks, including when the unit changes.
 
 ## Diagnosis

@@ -85,6 +85,10 @@ class DocumentLibrary:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(import_jobs)")}
             if "owner_user_id" not in columns:
                 conn.execute("ALTER TABLE import_jobs ADD COLUMN owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
+            conn.execute("""UPDATE import_jobs SET source_path=(
+                SELECT source_path FROM documents WHERE documents.id=import_jobs.document_id)
+                WHERE EXISTS (SELECT 1 FROM documents WHERE documents.id=import_jobs.document_id)
+                AND source_path<>(SELECT source_path FROM documents WHERE documents.id=import_jobs.document_id)""")
 
     def safe_path(self, stored):
         if not stored:
@@ -343,12 +347,13 @@ class DocumentLibrary:
 
         @app.get("/api/documents/<document_id>/source")
         def document_source(document_id):
+            from file_workflows import original_download_name
             row = get_document(document_id)
             mimetype = {"pdf": "application/pdf", "epub": "application/epub+zip", "docling": "application/json"}[row["source_type"]]
             source = self.safe_path(row["source_path"])
             return send_file(source, mimetype=mimetype, conditional=True,
                              as_attachment=request.args.get("download") == "1",
-                             download_name=source.name if source.suffix != ".source" else row["original_filename"])
+                             download_name=original_download_name(row))
 
         @app.get("/api/documents/<document_id>/thumbnail")
         def document_thumbnail(document_id):

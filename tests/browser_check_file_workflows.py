@@ -119,15 +119,14 @@ def main():
                 card=page.locator('.document-card').filter(has_text='Drop Good').first
                 card.locator('.document-open').dblclick()
                 panel=page.locator('#readerDocumentPanel')
-                assert panel.get_by_role('link',name='Download original').is_visible()
-                panel.get_by_role('button',name='Choose download format').click()
-                assert panel.get_by_role('menuitem',name='Docling JSON (converted)').is_visible()
-                panel.get_by_role('button',name='Edit Stored filename').click()
-                panel.get_by_role('textbox',name='Stored filename').fill('Renamed shelf.pdf')
-                panel.get_by_role('button',name='Save Stored filename').click()
-                page.wait_for_function("[...document.querySelectorAll('.document-info')].some(p=>p.textContent.includes('Renamed shelf.pdf'))")
+                downloads=page.locator('#readerDownloads')
+                assert downloads.get_by_role('link',name='Download original').is_visible()
+                downloads.get_by_role('button',name='Choose download format').click()
+                assert downloads.get_by_role('menuitem',name='Docling JSON (converted)').is_visible()
+                page.keyboard.press('Escape')
+                assert panel.get_by_role('button',name='Edit Stored filename').count()==0
                 page.screenshot(path=str(ARTIFACTS/'reader-panel-390.png'),full_page=True)
-                checks.append('reader panel exports and stored filename rename')
+                checks.append('reader top bar exports and read-only original filename')
                 dialog_text=[]
                 dialog_decisions=[]
                 def handle_dialog(dialog):

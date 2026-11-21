@@ -1,13 +1,41 @@
-"""Browser checks for Bug 0038 preview controls and spacing."""
+"""Browser checks for Bug 0038 preview geometry and Bug 0050 resting controls."""
 
+import io
 import tempfile
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from browser_check_preview import numbered_pdf_bytes
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, NameObject
 from browser_check_reader import port_number, seed, start_server
 from test_preview import two_section_epub
+
+
+ARTIFACTS = Path('/tmp/tomeshed-bug0050-browser')
+
+
+def contrast_pdf_bytes():
+    writer = PdfWriter()
+    for shade in (0.98, 0.03, 0.98):
+        page = writer.add_blank_page(width=300, height=400)
+        stream = DecodedStreamObject()
+        stream.set_data(f'{shade} g 0 0 300 400 re f'.encode('ascii'))
+        page[NameObject('/Contents')] = writer._add_object(stream)
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def check_resting_themes(page, content):
+    ARTIFACTS.mkdir(exist_ok=True)
+    stage = page.locator('.preview-stage').bounding_box()
+    for theme in ('light', 'dark'):
+        page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
+        page.mouse.move(stage['x'] + stage['width'] / 2, stage['y'] + 20)
+        for button in page.locator('#previewPrevious, #previewNext').all():
+            assert button.evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
+        page.locator('#previewBubble').screenshot(path=str(ARTIFACTS / f'preview-{content}-{theme}.png'))
 
 
 def main():
@@ -16,7 +44,7 @@ def main():
         port = port_number()
         process = start_server(folder, port)
         try:
-            pdf_id, _ = seed(folder, numbered_pdf_bytes(3), 'pdf', 'Control PDF')
+            pdf_id, _ = seed(folder, contrast_pdf_bytes(), 'pdf', 'Control PDF')
             epub_id, _ = seed(folder, two_section_epub(), 'epub', 'Control EPUB')
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
@@ -35,6 +63,7 @@ def main():
                 assert page.locator('#previewPrevious').is_disabled()
                 assert page.locator('#previewPrevious').get_attribute('aria-label') == 'Previous preview location'
                 assert page.locator('#previewNext').get_attribute('aria-label') == 'Next preview location'
+                check_resting_themes(page, 'light-content')
                 layout = page.locator('#previewBubble').evaluate("""bubble => {
                   const box = selector => bubble.querySelector(selector).getBoundingClientRect().toJSON();
                   return {bubble:bubble.getBoundingClientRect().toJSON(), page:box('#previewContent img'),
@@ -55,7 +84,7 @@ def main():
                                (button['y'] + button['height'] / 2)) <= 1, layout
                 stage = page.locator('.preview-stage').bounding_box()
                 page.mouse.move(stage['x'] + stage['width'] / 2, stage['y'] + 20)
-                assert page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "0"')
+                assert page.locator('#previewNext').evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
                 hit = layout['nextHit']
                 page.mouse.move(hit['x'] + 2, hit['y'] + hit['height'] / 2)
                 assert page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "1"')
@@ -65,6 +94,13 @@ def main():
                 page.mouse.click(button['x'] + button['width'] / 2, button['y'] + button['height'] / 2)
                 page.wait_for_function("document.querySelector('#previewPosition').textContent.includes('Page 2')")
                 assert not page.locator('#previewPrevious').is_disabled()
+                page.wait_for_function("document.querySelector('#previewContent img')?.complete")
+                check_resting_themes(page, 'dark-content')
+                page.locator('#previewBubble').focus()
+                page.keyboard.press('Tab')
+                assert page.locator('#previewPrevious').evaluate('button => button.matches(":focus-visible") && getComputedStyle(button).opacity === "1"')
+                page.keyboard.press('Tab')
+                assert page.locator('#previewNext').evaluate('button => button.matches(":focus-visible") && getComputedStyle(button).opacity === "1"')
                 page.locator('#previewNext').click()
                 page.wait_for_function("document.querySelector('#previewPosition').textContent.includes('Page 3')")
                 assert page.locator('#previewNext').is_disabled()
@@ -101,18 +137,18 @@ def main():
                 hx = hybrid_stage['x'] + hybrid_stage['width'] / 2
                 hy = hybrid_stage['y'] + 20
                 hybrid_page.mouse.move(hx, hy)
-                assert hybrid_page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "0"')
+                assert hybrid_page.locator('#previewNext').evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
                 hybrid_page.evaluate("""point => document.elementFromPoint(point.x, point.y).dispatchEvent(
                   new PointerEvent('pointermove', {bubbles:true, pointerType:'pen', clientX:point.x, clientY:point.y}))""",
                                      {'x': hx, 'y': hy})
                 assert hybrid_page.locator('#previewBubble').get_attribute('data-pointer-type') == 'pen'
-                assert hybrid_page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "0"')
+                assert hybrid_page.locator('#previewNext').evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
                 cdp = hybrid.new_cdp_session(hybrid_page)
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': hx, 'y': hy}]})
                 assert hybrid_page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "1"')
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
                 hybrid_page.mouse.move(hx + 3, hy)
-                assert hybrid_page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "0"')
+                assert hybrid_page.locator('#previewNext').evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
                 hybrid_page.evaluate('window.tomeshedPreview.close()')
                 cover = hybrid_card.locator('.document-open').bounding_box()
                 cx = cover['x'] + cover['width'] / 2
@@ -123,7 +159,7 @@ def main():
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
                 hybrid_stage = hybrid_page.locator('.preview-stage').bounding_box()
                 hybrid_page.mouse.move(hybrid_stage['x'] + hybrid_stage['width'] / 2, hybrid_stage['y'] + 20)
-                assert hybrid_page.locator('#previewNext').evaluate('button => getComputedStyle(button).opacity === "0"')
+                assert hybrid_page.locator('#previewNext').evaluate('button => Number(getComputedStyle(button).opacity) > 0 && Number(getComputedStyle(button).opacity) < 1')
                 hybrid.close()
                 browser.close()
         finally:
@@ -133,4 +169,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-    print('Bug 0038 browser preview controls checks passed')
+    print('Bug 0038 and Bug 0050 browser preview controls checks passed')

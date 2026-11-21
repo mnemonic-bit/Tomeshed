@@ -121,7 +121,8 @@ async function checkHealth() {
   try {
     const response = await api('/api/health');
     $('versionFooter').classList.remove('server-unavailable');
-    $('connectionStatus').textContent = 'Connected';
+    $('connectionStatus').textContent = '';
+    $('connectionStatus').hidden = $('connectionSeparator').hidden = true;
     const version = typeof response.version === 'string' && response.version.trim() ? response.version.trim() : null;
     $('apiVersion').textContent = version ? `API v${version}` : 'API version unavailable';
     $('apiUptime').textContent = formatUptime(response.uptime_seconds);
@@ -132,6 +133,7 @@ async function checkHealth() {
   } catch (_) {
     $('versionFooter').classList.add('server-unavailable');
     $('connectionStatus').textContent = 'Connection error';
+    $('connectionStatus').hidden = $('connectionSeparator').hidden = false;
     $('apiVersion').textContent = 'API version unavailable';
     $('apiUptime').textContent = 'Uptime unavailable';
     $('versionWarning').hidden = true;
@@ -675,7 +677,7 @@ function panelTagEditor(item) {
   tokens.append(input); shell.append(tokens, suggestions);
   return shell;
 }
-function panelDownloads(item) {
+function renderDownloads(item) {
   const formats = [];
   if (item.source_available) formats.push({label: `Original ${item.source_type.toUpperCase()}`, button: 'Download original', suffix: 'original'});
   if (item.structured_available && item.source_type !== 'docling') formats.push({label: 'Docling JSON (converted)', button: 'Download Docling JSON', suffix: 'docling'});
@@ -746,14 +748,12 @@ function renderDocumentInfo(document) {
     if (name === 'Last read') line.dataset.readerField = 'last-read';
     line.append(element('span', '', value)); details.append(line);
   }
-  details.append(panelInlineField(document, 'stored_filename', 'Stored filename', 'rename-file', 'POST', 'filename', 255));
   if (document.error) details.append(element('p', 'index-warning', document.error));
   if (document.state === 'ready_with_warning') {
     const retry = element('button', 'secondary', 'Retry indexing'); retry.type = 'button';
     retry.addEventListener('click', async () => { try { await api(`/api/documents/${encodeURIComponent(document.id)}/retry`, {method: 'POST'}); const updated = await api(`/api/documents/${encodeURIComponent(document.id)}`); window.tomeshedReader.updateDocument(updated); await refreshLibrary(); } catch (error) { window.tomeshedReader.panelError(document.id, `Retry indexing failed: ${error.message}`); } });
     details.append(retry);
   }
-  const downloads = panelDownloads(document); if (downloads) details.append(downloads);
   if (document.can_manage_visibility) {
     const visibilityLabel = element('label', 'document-visibility', 'Visibility');
     const visibilityInput = window.document.createElement('select');
@@ -1044,4 +1044,4 @@ if (window.EventSource) {
   eventStream.addEventListener('change', () => { refreshLibrary(true); window.tomeshedBookshelves?.refresh(); });
 }
 refreshLibrary();
-window.tomeshedCatalog = {readerState(id, item) { catalogItems.set(id, item); loadCatalog(false, true); }, refresh: refreshLibrary, renderDocumentInfo};
+window.tomeshedCatalog = {readerState(id, item) { catalogItems.set(id, item); loadCatalog(false, true); }, refresh: refreshLibrary, renderDocumentInfo, renderDownloads};

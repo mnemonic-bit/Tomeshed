@@ -52,3 +52,5 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0046 — Library shows a redundant Books and documents heading](bug-0046-remove-books-and-documents-heading.md) — Open.
 - [Bug 0047 — Footer counts and uptime do not match the requested display](bug-0047-footer-document-count-and-uptime.md) — Open.
 - [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.
+- [Bug 0049 — Develop branch does not trigger a build](bug-0049-develop-branch-build-not-triggered.md) — Resolved locally in `0.4.19`; awaiting GitHub push and pull-request verification.
+- [Bug 0050 — Redundant connection status, hidden preview controls, and exposed storage filenames](bug-0050-status-preview-reader-and-internal-filenames.md) — Resolved locally in `1.0.0`.
