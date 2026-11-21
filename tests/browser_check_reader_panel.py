@@ -92,7 +92,8 @@ def main():
                 assert panel.locator('.document-inline-field[data-field="title"]').count() == 1
                 assert panel.get_by_text('Original filename:').is_visible()
                 assert panel.get_by_role('button', name='Retry indexing').is_visible()
-                downloads = panel.locator('.document-download-split')
+                downloads = page.locator('#readerDownloads .document-download-split')
+                assert panel.locator('.document-download-split').count() == 0
                 assert downloads.get_by_role('link', name='Download original').get_attribute('href').endswith('/export/original')
                 downloads.get_by_role('button', name='Choose download format').click()
                 assert downloads.get_by_role('menuitem', name='Original PDF').is_visible()
@@ -185,16 +186,9 @@ def main():
                 saved = page.evaluate('async id => (await (await fetch(`/api/documents/${id}`)).json())', document_id)
                 assert (saved['title'], saved['author']) == ('Concurrent title', 'Concurrent author'), saved
                 assert page.locator('#readerTitle').inner_text() == 'Concurrent title'
-                panel.get_by_role('button', name='Edit Stored filename').click()
-                name = panel.get_by_role('textbox', name='Stored filename')
-                name.fill('Renamed panel.pdf')
-                name.press('Enter')
-                panel.get_by_text('Renamed panel.pdf').wait_for()
+                assert panel.get_by_role('button', name='Edit Stored filename').count() == 0
+                assert panel.get_by_role('textbox', name='Stored filename').count() == 0
                 assert panel.get_by_text('Panel PDF.pdf').is_visible()
-                panel.get_by_role('button', name='Edit Stored filename').click()
-                panel.get_by_role('textbox', name='Stored filename').fill('Discarded.pdf')
-                panel.get_by_role('button', name='Cancel Stored filename').click()
-                assert panel.get_by_text('Renamed panel.pdf').is_visible()
                 visibility = panel.get_by_label('Visibility')
                 colors = []
                 for theme in ('light', 'dark'):
@@ -206,8 +200,9 @@ def main():
 
                 other_panel = open_document(page, other_id)
                 assert 'is-minimized' not in other_panel.get_attribute('class')
-                assert other_panel.locator('.document-download-split').count() == 1
-                assert other_panel.get_by_role('button', name='Choose download format').count() == 0
+                assert other_panel.locator('.document-download-split').count() == 0
+                assert page.locator('#readerDownloads .document-download-split').count() == 1
+                assert page.locator('#readerDownloads').get_by_role('button', name='Choose download format').count() == 0
                 other_panel.get_by_role('button', name='Minimize document info').click()
                 page.locator('#readerClose').click()
                 panel = open_document(page, document_id)

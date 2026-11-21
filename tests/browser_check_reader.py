@@ -151,6 +151,9 @@ def main():
                 assert page.locator('.pdf-page').count() == 12
                 page.locator('#readerClose').focus()
                 page.keyboard.press('Tab')
+                assert page.locator('#readerDownloads .document-download-main').evaluate('el => document.activeElement === el')
+                assert page.locator('#readerDownloads .document-download-main').evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
+                page.keyboard.press('Tab')
                 assert page.evaluate('document.activeElement.id') == 'readerPrevious'
                 assert page.locator('#readerPrevious').evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
                 page.keyboard.press('Tab')

@@ -14,7 +14,7 @@ def layout(page, width):
     page.set_viewport_size({'width': width, 'height': 750})
     boxes = page.evaluate('''() => {
       const ids = ['readerClose', 'readerTitle', 'readerPosition', 'readerPrevious',
-        'readerNext', 'readerZoomOut', 'readerZoomPercent', 'readerZoomIn'];
+        'readerNext', 'readerZoomOut', 'readerZoomPercent', 'readerZoomIn', 'readerDownloads'];
       return Object.fromEntries(ids.map(id => {
         const r = document.getElementById(id).getBoundingClientRect();
         return [id, {left:r.left, right:r.right, top:r.top, bottom:r.bottom}];
@@ -30,7 +30,7 @@ def layout(page, width):
             assert a['right'] <= b['left'] + 1, (width, left, right, boxes)
     assert boxes['readerPrevious']['top'] == boxes['readerNext']['top']
     assert boxes['readerZoomOut']['top'] == boxes['readerZoomIn']['top']
-    if width >= 900:
+    if width >= 1200:
         centers = [(box['top'] + box['bottom']) / 2 for box in boxes.values()]
         assert max(centers) - min(centers) < 5, boxes
         assert boxes['readerPosition']['left'] <= width / 2 <= boxes['readerPosition']['right'], boxes
@@ -67,6 +67,7 @@ def main():
                 assert page.locator('#readerNext').get_attribute('aria-label')
                 assert page.locator('#readerZoomPercent').input_value() == '100'
                 assert page.locator('#readerZoomPercent').evaluate('el => el.closest("button")') is None
+                layout(page, 1280)
                 layout(page, 1000)
                 page.locator('#readerNext').click()
                 page.wait_for_function("document.querySelector('#readerPosition').textContent === 'Page 2 of 8'")
@@ -109,6 +110,8 @@ def main():
                 page.locator('#readerZoomIn').click()
                 assert field.input_value() == '250' and abs(zoom_value(page) - 2.5) < .001
                 page.locator('#readerClose').focus()
+                page.keyboard.press('Tab')
+                assert page.evaluate('document.activeElement.classList.contains("document-download-main")')
                 page.keyboard.press('Tab')
                 assert page.evaluate('document.activeElement.id') == 'readerPrevious'
                 assert page.locator('#readerPrevious').evaluate('el => getComputedStyle(el).outlineStyle') != 'none'

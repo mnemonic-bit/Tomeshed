@@ -5,7 +5,6 @@ import io
 import json
 import os
 import socket
-import sqlite3
 import threading
 import time
 import zipfile
@@ -46,7 +45,7 @@ def transfer(client, job, data):
     return client.put(f'/api/imports/{job}/file', data=data, content_type='application/octet-stream')
 
 
-def test_registered_transfer_cancel_retry_export_rename_and_removal(module, monkeypatch):
+def test_registered_transfer_cancel_retry_export_and_removal(module, monkeypatch):
     monkeypatch.setattr(module.document_library, '_run_conversion', valid_result)
     client = signed_in(module)
     source = pdf_bytes(1)
@@ -66,7 +65,8 @@ def test_registered_transfer_cancel_retry_export_rename_and_removal(module, monk
     assert client.post(f'/api/imports/{registered["id"]}/cancel').status_code == 409
     document_id = registered['document_id']
     detail = client.get(f'/api/documents/{document_id}').json
-    assert detail['original_filename'] == detail['stored_filename'] == 'Original.pdf'
+    assert detail['original_filename'] == 'Original.pdf'
+    assert 'stored_filename' not in detail
     original = client.get(f'/api/documents/{document_id}/export/original')
     assert original.data == source and b'Original.pdf' in original.headers['Content-Disposition'].encode()
     structured = client.get(f'/api/documents/{document_id}/export/docling')
@@ -77,47 +77,31 @@ def test_registered_transfer_cancel_retry_export_rename_and_removal(module, monk
     assert client.get(f'/api/documents/{document_id}').json['structured_available'] is False
     assert client.get(f'/api/documents/{document_id}/export/docling').status_code == 404
     assert module.app.test_client().get(f'/api/documents/{document_id}/export/original').status_code == 401
-    for unsafe in ('../escape', 'x\\y', '\x00bad', ' ', ' .pdf', '.pdf'):
-        assert client.post(f'/api/documents/{document_id}/rename-file',json={'filename':unsafe}).status_code == 400
-    collision = module.document_library.root / 'sources' / document_id / 'Occupied.pdf'
-    collision.write_bytes(b'existing target')
-    assert client.post(f'/api/documents/{document_id}/rename-file',json={'filename':'Occupied.pdf'}).status_code == 409
-    assert collision.read_bytes() == b'existing target'
-    assert client.get(f'/api/documents/{document_id}').json['stored_filename'] == 'Original.pdf'
-    collision.unlink()
-    changed = client.post(f'/api/documents/{document_id}/rename-file',json={'filename':'Shelf copy.txt'})
-    assert changed.status_code == 200 and changed.json['document']['stored_filename'] == 'Shelf copy.pdf'
-    assert changed.json['document']['original_filename'] == 'Original.pdf'
+    rejected = client.post(f'/api/documents/{document_id}/rename-file', json={'filename': 'Shelf copy.pdf'})
+    assert rejected.status_code == 409
+    assert client.get(f'/api/documents/{document_id}').json['original_filename'] == 'Original.pdf'
     assert client.get(f'/api/documents/{document_id}/export/original').data == source
-    assert b'Shelf copy.pdf' in client.get(f'/api/documents/{document_id}/export/original').headers['Content-Disposition'].encode()
+    assert 'Original.pdf' in client.get(f'/api/documents/{document_id}/export/original').headers['Content-Disposition']
     assert client.delete(f'/api/documents/{document_id}',json={'confirm':'wrong'}).status_code == 400
     assert client.delete(f'/api/documents/{document_id}',json={'confirm':detail['title']}).status_code == 200
     assert client.get(f'/api/documents/{document_id}').status_code == 404
 
 
-def test_rename_db_failure_keeps_original(module, monkeypatch):
-    monkeypatch.setattr(module.document_library,'_run_conversion',fake_result)
-    client=signed_in(module); source=pdf_bytes(1)
-    job=register(client,'Stable.pdf',len(source)).json
-    transfer(client,job['id'],source); wait_job(client,job['id'],'ready')
-    old=module.document_library.root/'sources'/job['document_id']/'Stable.pdf'
-    original_db=module.document_library.files.db
-    from contextlib import contextmanager
-    @contextmanager
-    def failed_db():
-        with original_db() as conn:
-            class Wrapper:
-                def execute(self, query, *args):
-                    if query.startswith('UPDATE documents SET source_path'):
-                        raise sqlite3.OperationalError('injected failure')
-                    return conn.execute(query,*args)
-            yield Wrapper()
-    monkeypatch.setattr(module.document_library.files,'db',failed_db)
-    response=client.post(f'/api/documents/{job["document_id"]}/rename-file',json={'filename':'Moved.pdf'})
-    assert response.status_code==500
-    assert old.read_bytes()==source and not old.with_name('Moved.pdf').exists()
+def test_rejected_rename_keeps_source_and_job_references(module, monkeypatch):
+    monkeypatch.setattr(module.document_library, '_run_conversion', fake_result)
+    client = signed_in(module)
+    source = pdf_bytes(1)
+    job = register(client, 'Stable.pdf', len(source)).json
+    transfer(client, job['id'], source)
+    wait_job(client, job['id'], 'ready')
     with module.db() as conn:
-        assert conn.execute('SELECT source_path FROM documents WHERE id=?',(job['document_id'],)).fetchone()[0].endswith('Stable.pdf')
+        original_path = conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0]
+    response = client.post(f'/api/documents/{job["document_id"]}/rename-file', json={'filename': 'Moved.pdf'})
+    assert response.status_code == 409
+    assert (module.document_library.root / original_path).read_bytes() == source
+    with module.db() as conn:
+        assert conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0] == original_path
+        assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (job['id'],)).fetchone()[0] == original_path
 
 
 def test_processing_cancel_survives_restart_without_card_or_temp(module, monkeypatch):
@@ -152,7 +136,7 @@ def test_restart_rejects_valid_partial_prefix_and_cleans_cancelled_leftover(modu
     short=pdf_bytes(1)
     expected=len(short)+100
     job=register(client,'Partial.pdf',expected).json
-    source=module.document_library.root/'sources'/job['document_id']/'Partial.pdf'
+    source=module.document_library.root/'sources'/job['document_id']/(job['document_id']+'.source')
     source.write_bytes(short)
     with module.db() as conn:
         conn.execute('UPDATE import_jobs SET bytes_received=? WHERE id=?',(len(short),job['id']))
@@ -160,7 +144,7 @@ def test_restart_rejects_valid_partial_prefix_and_cleans_cancelled_leftover(modu
     no_size_path=module.document_library.root/no_size_stored
     no_size_path.write_bytes(short)
     cancelled=register(client,'Cancelled leftover.pdf',len(short)).json
-    leftover=module.document_library.root/'sources'/cancelled['document_id']/'Cancelled leftover.pdf'
+    leftover=module.document_library.root/'sources'/cancelled['document_id']/(cancelled['document_id']+'.source')
     leftover.write_bytes(short)
     with module.db() as conn:
         conn.execute("UPDATE import_jobs SET state='failed',cancel_requested=1,error='Cancelled by user' WHERE id=?",(cancelled['id'],))
@@ -349,6 +333,11 @@ def test_watcher_settle_dedupe_failure_and_receipt(tmp_path, monkeypatch, caplog
     wait_job(client,job['id'],'ready')
     assert path.read_bytes()==source
     with current.db() as conn:
+        stored = conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0]
+        assert Path(stored).name == job['document_id'] + '.source'
+        assert (watcher.root / stored).read_bytes() == source
+        assert conn.execute('SELECT original_filename FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0] == 'Watched.pdf'
+        assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (job['id'],)).fetchone()[0] == stored
         assert conn.execute('SELECT COUNT(*) FROM ingest_receipts').fetchone()[0]==1
     watcher.scan_once(6)
     assert len(client.get('/api/imports').json['jobs'])==1
@@ -377,8 +366,12 @@ def test_url_controlled_http_redirect_size_timeout_and_pinned_address(module, mo
     import http.server
     from ipaddress import ip_network
     source = pdf_bytes(1)
+    from test_documents import epub_bytes
+    epub = epub_bytes()
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path.startswith('/epub.pdf'):
+                self.send_response(200); self.end_headers(); self.wfile.write(epub); return
             if self.path.startswith('/redirect-private'):
                 self.send_response(302); self.send_header('Location','http://169.254.169.254/private.pdf'); self.end_headers(); return
             if self.path.startswith('/redirect-loop'):
@@ -418,6 +411,14 @@ def test_url_controlled_http_redirect_size_timeout_and_pinned_address(module, mo
         assert pinned.status_code==202
         wait_job(client,pinned.json['id'],'ready')
         assert lookups.count('book.example')==1 and '127.0.0.1' in lookups
+        epub_job = client.post('/api/imports/url', json={'url': base + '/epub.pdf'}).json
+        wait_job(client, epub_job['id'], 'ready')
+        with module.db() as conn:
+            epub_row = conn.execute('SELECT original_filename,source_path FROM documents WHERE id=?', (epub_job['document_id'],)).fetchone()
+            assert epub_row['original_filename'] == 'epub.epub'
+            assert Path(epub_row['source_path']).name == epub_job['document_id'] + '.source'
+            assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (epub_job['id'],)).fetchone()[0] == epub_row['source_path']
+        assert client.get(f'/api/documents/{epub_job["document_id"]}/export/original').data == epub
         module.app.config['MAX_UPLOAD_BYTES']=len(source)+1
         for route,reason in (('/redirect-private','not public'),('/redirect-loop','five redirects'),('/oversize','size limit')):
             result=client.post('/api/imports/url',json={'url':base+route})
@@ -429,7 +430,7 @@ def test_url_controlled_http_redirect_size_timeout_and_pinned_address(module, mo
         result=client.post('/api/imports/url',json={'url':base+'/slow'})
         failed=wait_job(client,result.json['id'],'failed')
         assert 'timed out' in failed['error'] or 'timeout' in failed['error']
-        assert client.get('/api/documents').json['library_total']==2
+        assert client.get('/api/documents').json['library_total']==3
     finally:
         server.shutdown(); server.server_close()
 
@@ -504,3 +505,143 @@ def test_watcher_observed_temporary_handoff_imports_after_rename(tmp_path, monke
     assert len(jobs)==1
     wait_job(client,jobs[0]['id'],'ready')
     assert final.read_bytes()==pdf_bytes(1)
+
+
+def test_internal_source_names_preserve_user_download_name(module, monkeypatch):
+    """Imports keep server names internal and reject the former rename action."""
+    import uuid
+
+    monkeypatch.setattr(module.document_library, '_run_conversion', fake_result)
+    client = signed_in(module)
+    source = pdf_bytes(1)
+    job = register(client, 'My original.pdf', len(source)).json
+    assert transfer(client, job['id'], source).status_code == 202
+    wait_job(client, job['id'], 'ready')
+    with module.db() as conn:
+        stored = conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0]
+    assert uuid.UUID(Path(stored).stem).hex == Path(stored).stem
+    detail = client.get(f'/api/documents/{job["document_id"]}').json
+    assert detail['original_filename'] == 'My original.pdf'
+    assert 'stored_filename' not in detail
+    for endpoint in ('source', 'export/original'):
+        response = client.get(f'/api/documents/{job["document_id"]}/{endpoint}')
+        assert response.status_code == 200 and response.data == source
+        assert 'My original.pdf' in response.headers['Content-Disposition']
+    response = client.post(f'/api/documents/{job["document_id"]}/rename-file', json={'filename': 'Changed.pdf'})
+    assert response.status_code == 409
+    with module.db() as conn:
+        assert conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0] == stored
+    assert (module.document_library.root / stored).read_bytes() == source
+
+
+@pytest.mark.parametrize('kind', ['pdf', 'epub'])
+def test_concurrent_originals_use_uuid_names_and_readable_archive_entries(module, monkeypatch, kind):
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import unquote
+    import uuid
+    from test_documents import epub_bytes
+
+    from reader_service import PDFIUM_LOCK
+
+    def locked_conversion(source, filename, staging):
+        with PDFIUM_LOCK:
+            return fake_result(source, filename, staging)
+
+    monkeypatch.setattr(module.document_library, '_run_conversion', locked_conversion)
+    clients = [signed_in(module), signed_in(module)]
+    filename = f'Étagère book.{kind}'
+    sources = [pdf_bytes(1), pdf_bytes(2)] if kind == 'pdf' else [epub_bytes(2), epub_bytes(3)]
+    barrier = threading.Barrier(2)
+
+    def import_one(index):
+        barrier.wait(timeout=5)
+        job = register(clients[index], filename, len(sources[index])).json
+        assert transfer(clients[index], job['id'], sources[index]).status_code == 202
+        wait_job(clients[index], job['id'], 'ready')
+        return job
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        jobs = list(pool.map(import_one, range(2)))
+    client = clients[0]
+    with module.db() as conn:
+        paths = [conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0] for job in jobs]
+        assert len(set(paths)) == 2
+        for job, path in zip(jobs, paths):
+            assert uuid.UUID(Path(path).stem).hex == Path(path).stem
+            assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (job['id'],)).fetchone()[0] == path
+    for job, path, source in zip(jobs, paths, sources):
+        document_id = job['document_id']
+        assert (module.document_library.root / path).read_bytes() == source
+        for endpoint in ('source?download=1', 'export/original'):
+            response = client.get(f'/api/documents/{document_id}/{endpoint}')
+            assert response.data == source
+            assert filename in unquote(response.headers['Content-Disposition'])
+            assert Path(path).name not in response.headers['Content-Disposition']
+        assert client.get(f'/api/documents/{document_id}/preview').status_code == 200
+        assert client.get(f'/api/documents/{document_id}/reader').status_code == 200
+        assert client.patch(f'/api/documents/{document_id}/metadata', json={'title': 'Changed title', 'author': 'Changed author'}).status_code == 200
+        with module.db() as conn:
+            assert conn.execute('SELECT source_path FROM documents WHERE id=?', (document_id,)).fetchone()[0] == path
+    response = client.post('/api/documents/bulk/export/original', json={'ids': [job['document_id'] for job in jobs]})
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        assert archive.namelist() == [filename, f'Étagère book (2).{kind}', 'manifest.json']
+        assert archive.read(filename) == sources[0]
+        assert archive.read(f'Étagère book (2).{kind}') == sources[1]
+
+
+def test_legacy_filename_sources_remain_readable_retryable_and_removable(module, monkeypatch):
+    monkeypatch.setattr(module.document_library, '_run_conversion', fake_result)
+    client = signed_in(module)
+    source = pdf_bytes(2)
+    job = register(client, 'Original filename.pdf', len(source)).json
+    transfer(client, job['id'], source)
+    wait_job(client, job['id'], 'ready')
+    with module.db() as conn:
+        current = conn.execute('SELECT source_path FROM documents WHERE id=?', (job['document_id'],)).fetchone()[0]
+        legacy = str(Path(current).with_name('Historically renamed.pdf'))
+        (module.document_library.root / current).rename(module.document_library.root / legacy)
+        conn.execute("UPDATE documents SET source_path=?,state='ready_with_warning' WHERE id=?", (legacy, job['document_id']))
+    reloaded = importlib.reload(module)
+    monkeypatch.setattr(reloaded.document_library, '_run_conversion', fake_result)
+    client = signed_in(reloaded)
+    document_id = job['document_id']
+    with reloaded.db() as conn:
+        assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (job['id'],)).fetchone()[0] == legacy
+    for endpoint in ('source?download=1', 'export/original'):
+        response = client.get(f'/api/documents/{document_id}/{endpoint}')
+        assert response.data == source
+        assert 'Original filename.pdf' in response.headers['Content-Disposition']
+    assert client.get(f'/api/documents/{document_id}/preview').status_code == 200
+    assert client.get(f'/api/documents/{document_id}/reader').status_code == 200
+    retry = client.post(f'/api/documents/{document_id}/retry')
+    assert retry.status_code == 202
+    wait_job(client, retry.json['id'], 'ready')
+    with reloaded.db() as conn:
+        assert conn.execute('SELECT source_path FROM documents WHERE id=?', (document_id,)).fetchone()[0] == legacy
+        assert conn.execute('SELECT source_path FROM import_jobs WHERE id=?', (retry.json['id'],)).fetchone()[0] == legacy
+    assert (reloaded.document_library.root / legacy).read_bytes() == source
+    title = client.get(f'/api/documents/{document_id}').json['title']
+    assert client.delete(f'/api/documents/{document_id}', json={'confirm': title}).status_code == 200
+    assert not (reloaded.document_library.root / legacy).exists()
+
+
+def test_legacy_original_names_are_safe_for_headers_and_archives(module, monkeypatch):
+    monkeypatch.setattr(module.document_library, '_run_conversion', fake_result)
+    client = signed_in(module)
+    source = pdf_bytes(1)
+    jobs = []
+    for metadata, safe_name in (('../unsafe.pdf', 'unsafe.pdf'), ('C:\\folder\\notes.pdf', 'notes.pdf'), ('line\r\nbad.pdf', 'line__bad.pdf'), ('manifest.json', 'manifest (2).json')):
+        job = register(client, 'Safe.pdf', len(source)).json
+        transfer(client, job['id'], source)
+        wait_job(client, job['id'], 'ready')
+        with module.db() as conn:
+            conn.execute('UPDATE documents SET original_filename=? WHERE id=?', (metadata, job['document_id']))
+        response = client.get(f'/api/documents/{job["document_id"]}/source?download=1')
+        assert response.status_code == 200 and response.data == source
+        assert '\r' not in response.headers['Content-Disposition'] and '\n' not in response.headers['Content-Disposition']
+        jobs.append((job['document_id'], safe_name))
+    response = client.post('/api/documents/bulk/export/original', json={'ids': [document_id for document_id, _ in jobs]})
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        assert archive.namelist() == [name for _, name in jobs] + ['manifest.json']
+        assert all(archive.read(name) == source for _, name in jobs)
+    assert module.app.test_client().post(f'/api/documents/{jobs[0][0]}/rename-file', json={'filename': 'Changed.pdf'}).status_code == 401

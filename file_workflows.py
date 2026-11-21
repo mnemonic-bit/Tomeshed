@@ -73,6 +73,16 @@ def display_url(value):
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ''))
 
 
+def original_download_name(row):
+    """Use original metadata for download names, including legacy sources."""
+    name = Path(str(row['original_filename']).replace('\\', '/')).name[:255]
+    name = re.sub(r'[\x00-\x1f\x7f]', '_', name)
+    if not name or name in ('.', '..'):
+        suffix = {'pdf': '.pdf', 'epub': '.epub', 'docling': '.json'}[row['source_type']]
+        return 'document' + suffix
+    return name
+
+
 def signature(meta):
     return (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns)
 
@@ -180,7 +190,7 @@ class FileWorkflows:
         if expected_bytes is not None and (not isinstance(expected_bytes, int) or expected_bytes < 0 or expected_bytes > self.app.config['MAX_UPLOAD_BYTES']):
             raise ValueError(f'Upload exceeds the {self.app.config["MAX_UPLOAD_BYTES"]} byte size limit')
         job_id, document_id = uuid.uuid4().hex, uuid.uuid4().hex
-        path = f'sources/{document_id}/{name}'
+        path = f'sources/{document_id}/{document_id}.source'
         (self.root / 'sources' / document_id).mkdir()
         now = time.time()
         with self.db() as conn:
@@ -324,7 +334,7 @@ class FileWorkflows:
         def export_original(document_id):
             row = self.document(document_id)
             source = library.safe_path(row['source_path'])
-            return send_file(source, as_attachment=True, download_name=source.name,
+            return send_file(source, as_attachment=True, download_name=original_download_name(row),
                              mimetype={'pdf':'application/pdf','epub':'application/epub+zip','docling':'application/json'}[row['source_type']])
 
         @app.post('/api/documents/bulk/status')
@@ -349,6 +359,7 @@ class FileWorkflows:
             except ValueError as exc:
                 return jsonify(error=str(exc)), 400
             included, failures = [], []
+            entry_names = {'manifest.json'}
             archive_file = SpooledTemporaryFile(max_size=8 * 1024 * 1024)
             with zipfile.ZipFile(archive_file, 'w', compression=zipfile.ZIP_STORED) as archive:
                 for document_id in ids:
@@ -359,9 +370,13 @@ class FileWorkflows:
                         continue
                     try:
                         source = library.safe_path(row['source_path'])
-                        filename = row['original_filename'] if source.suffix == '.source' else source.name
-                        basename = re.sub(r'[\\/\x00-\x1f\x7f]', '_', filename)
-                        entry_name = f'{Path(basename).stem} ({document_id}){Path(basename).suffix}'
+                        filename = original_download_name(row)
+                        entry_name = filename
+                        copy = 2
+                        while entry_name.casefold() in entry_names:
+                            entry_name = f'{Path(filename).stem} ({copy}){Path(filename).suffix}'
+                            copy += 1
+                        entry_names.add(entry_name.casefold())
                         archive.write(source, entry_name)
                     except (HTTPException, OSError, ValueError):
                         failures.append({'id': document_id, 'reason': 'source_unavailable'})
@@ -429,40 +444,8 @@ class FileWorkflows:
 
         @app.post('/api/documents/<document_id>/rename-file')
         def rename_file(document_id):
-            row = self.document(document_id)
-            data = request.get_json(silent=True) or {}
-            name = data.get('filename')
-            if not isinstance(name, str) or not name.strip() or name in ('.','..') or any(char in name for char in ('/', '\\')) or any(ord(char) < 32 or ord(char) == 127 for char in name):
-                return jsonify(error='Enter a basename without separators or control characters'), 400
-            source = library.safe_path(row['source_path'])
-            extension = {'pdf':'.pdf','epub':'.epub','docling':'.json'}[row['source_type']]
-            requested = name.strip()
-            stem = Path(requested).stem.strip()
-            if not stem or stem in ('.','..') or stem.startswith('.'):
-                return jsonify(error='Filename is empty'), 400
-            target = source.with_name(stem + extension)
-            if target == source:
-                return jsonify(document=library.public_document(row))
-            with self.lock:
-                if target.exists() or target.is_symlink():
-                    return jsonify(error='A file with that name already exists'), 409
-                try:
-                    os.link(source, target, follow_symlinks=False)
-                    with self.db() as conn:
-                        conn.execute('UPDATE documents SET source_path=? WHERE id=?', (str(target.relative_to(self.root)), document_id))
-                    try:
-                        source.unlink()
-                    except OSError:
-                        with self.db() as conn:
-                            conn.execute('UPDATE documents SET source_path=? WHERE id=?', (row['source_path'], document_id))
-                        raise
-                except Exception as exc:
-                    target.unlink(missing_ok=True)
-                    return jsonify(error=f'Rename failed: {exc}'), 500
-            with self.db() as conn:
-                updated = conn.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
-            library.publish()
-            return jsonify(document=library.public_document(updated))
+            self.document(document_id)
+            return jsonify(error='Stored filenames are managed internally'), 409
 
         @app.delete('/api/documents/<document_id>')
         def remove_document(document_id):
@@ -644,11 +627,8 @@ class FileWorkflows:
                 with self.db() as conn:
                     if not row['original_filename'].lower().endswith('.' + kind):
                         name = Path(row['original_filename']).stem + '.' + kind
-                        renamed = target.with_name(name)
-                        os.replace(target, renamed)
-                        target = renamed
-                        conn.execute('UPDATE import_jobs SET original_filename=?,source_path=? WHERE id=?',
-                                     (name,str(renamed.relative_to(self.root)),job_id))
+                        conn.execute('UPDATE import_jobs SET original_filename=? WHERE id=?',
+                                     (name,job_id))
                     conn.execute('UPDATE import_jobs SET transfer_complete=1,bytes_received=?,updated_at=? WHERE id=?',
                                  (count,time.time(),job_id))
                 self.library.pool.submit(self.library._process_job, job_id)
