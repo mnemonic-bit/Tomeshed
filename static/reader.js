@@ -294,6 +294,9 @@
         const first = body.querySelector('.pdf-page img');
         if (!first) { showFailure('unsupported_content', 'The PDF has no pages'); return; }
         await first.decode();
+      } else if (content.format === 'epub') {
+        // Settle image dimensions before restoring the locator and calculating progress.
+        await Promise.allSettled([...body.querySelectorAll('img')].map(image => image.decode()));
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
       if (token !== generation || $('readerError').hidden === false) return;
