@@ -2,7 +2,7 @@
 
 **Source:** User-requested first version  
 **Status:** Proposed  
-**Last refined:** 2026-10-10
+**Last refined:** 2026-11-22
 
 Feature files follow VDL's `FEATURES/feature-NNNN-description.md` convention. Each file has its own outcome and acceptance criteria. Build them in number order when a dependency is listed; after Feature 0002, the organization and ingest workflows can be developed separately from the reader.
 
@@ -16,8 +16,11 @@ Feature files follow VDL's `FEATURES/feature-NNNN-description.md` convention. Ea
 | 0006 | [Library file workflows](feature-0006-library-file-workflows.md) | 0002 | Drag-and-drop, direct URL and watched-folder ingest, export, and safe cleanup |
 | 0007 | [Personal bookshelves](feature-0007-personal-bookshelves.md) | 0002, 0003 | Ordered collections of books with personal reading continuity |
 | 0008 | [Publish through GitHub](feature-0008-publish-through-github.md) | 0004, 0006 | Validated GHCR images and Releases with an operator-controlled Podman rollout |
+| 0009 | [Paste a document URL to import](feature-0009-paste-url-to-import.md) | 0002, 0006, 0007 | Paste a direct document URL to show download progress in Imports and add the validated source to the library |
 
 Features 0001–0004 establish the requested first reading experience. Features 0005–0007 adapt the remaining VDL library capabilities that fit books and PDFs. Feature 0008 adapts VDL's GitHub validation and image publication after Tomeshed's container workflow exists. Each can be planned and built as a separate slice after its listed dependencies.
+
+Feature 0009 adds the global URL paste shortcut to Feature 0006's import workflow. It extends direct URL imports to DoclingDocument JSON so pasted URLs and drag-and-drop accept the same source formats, and applies Feature 0007's ownership and visibility rules.
 
 ## VDL translation
 

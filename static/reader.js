@@ -373,9 +373,10 @@
   }, {passive: true});
   document.addEventListener('keydown', event => {
     if (overlay.hidden || $('bookshelfDialog').open) return;
-    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    if (event.key === 'Escape') { event.preventDefault(); if (!$('importsDrawer').hidden) closeImports(); else close(); }
     if (event.key === 'Tab') {
-      const focusable = [...overlay.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')]
+      const roots = $('importsDrawer').hidden ? [overlay] : [overlay, $('importsDrawer')];
+      const focusable = roots.flatMap(root => [...root.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')])
         .filter(node => !node.hidden && !node.disabled && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
       if (!focusable.length) return;
       const index = focusable.indexOf(document.activeElement);
@@ -386,7 +387,7 @@
     }
   });
   document.addEventListener('focusin', event => {
-    if (!overlay.hidden && !$('bookshelfDialog').open && !overlay.contains(event.target)) $('readerClose').focus();
+    if (!overlay.hidden && !$('bookshelfDialog').open && !overlay.contains(event.target) && ($('importsDrawer').hidden || !$('importsDrawer').contains(event.target))) $('readerClose').focus();
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { captureLatestMovement(); flushSave(); } });
   window.tomeshedReader = {open, close, isOpenFor, updateDocument, panelError};

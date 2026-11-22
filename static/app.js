@@ -839,11 +839,13 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
         items = [...oldIds.filter(id => byId.has(id)).map(id => byId.get(id)),
           ...items.filter(item => !oldIds.includes(catalogKey(item)))];
       }
-      const focusedId = preserve ? document.activeElement?.closest('.document-card')?.dataset.documentId : null;
+      const focusedCard = preserve ? document.activeElement?.closest('.document-card, .bookshelf-card') : null;
+      const focusedKey = focusedCard ? cardKey(focusedCard) : null;
       const focusedClass = document.activeElement?.className;
       window.tomeshedPreview.close(); catalogItems.clear();
       $('documentGrid').replaceChildren(...items.map(renderCatalogItem));
-      if (focusedId && focusedClass) document.querySelector(`.document-card[data-document-id="${CSS.escape(focusedId)}"] .${String(focusedClass).split(' ')[0]}`)?.focus({preventScroll: true});
+      if (focusedKey && focusedClass) [...$('documentGrid').children].find(card => cardKey(card) === focusedKey)
+        ?.querySelector(`.${CSS.escape(String(focusedClass).split(' ')[0])}`)?.focus({preventScroll: true});
       catalogLoaded = endless ? items.length : offset + items.length;
     }
     renderTagFilters(data.available_tags || []); updateFilterButtonState();
@@ -860,11 +862,29 @@ async function loadCatalog(append = false, preserve = false, requestedPage = nul
   finally { if (generation === catalogGeneration) { catalogLoading = false; updateCatalogNavigation(); requestAnimationFrame(loadVisibleEndless); await syncSelectionAccess(); } }
 }
 let importJobsGeneration = 0;
+const importJobStates = new Map();
+let importJobsLoaded = false;
+function announceImport(message) {
+  $('importStatus').textContent = message;
+  $('importAnnouncement').textContent = message;
+}
 async function loadImportJobs() {
   const generation = ++importJobsGeneration;
   try {
     const data = await api('/api/imports');
     if (generation !== importJobsGeneration) return;
+    for (const job of data.jobs) {
+      const previous = importJobStates.get(job.id);
+      if ((previous || importJobsLoaded) && previous !== job.state) {
+        if (['ready', 'ready_with_warning'].includes(job.state)) {
+          announceImport(`Imported ${job.original_filename}${job.state === 'ready_with_warning' ? ' with an indexing warning' : ''}. Current library filters remain applied.`);
+        } else if (job.state === 'failed') {
+          announceImport(`Import failed: ${job.error || 'See Imports for details.'}`);
+        }
+      }
+      importJobStates.set(job.id, job.state);
+    }
+    importJobsLoaded = true;
     const jobs = data.jobs.filter(job => ['pending', 'processing', 'failed'].includes(job.state));
     const activeCount = data.jobs.filter(job => ['pending', 'processing'].includes(job.state)).length;
     $('activeImportCount').textContent = activeCount || '';
@@ -877,8 +897,9 @@ async function loadImportJobs() {
     const list = $('importJobList'); list.replaceChildren();
     for (const job of jobs) {
       const row = element('article', 'import-job');
-      row.append(element('strong', '', job.original_filename), element('span', '', job.state));
-      if (job.bytes_received) row.append(element('span', 'import-bytes', `${job.bytes_received}${job.expected_bytes == null ? '' : ` / ${job.expected_bytes}`} bytes received`));
+      row.dataset.jobId = job.id;
+      row.append(element('strong', '', job.original_filename || 'URL download'), element('span', 'import-state', job.origin === 'url' && job.state === 'pending' ? 'Downloading' : job.state));
+      if (job.origin === 'url' || job.bytes_received) row.append(element('span', 'import-bytes', `${job.bytes_received}${job.expected_bytes == null ? '' : ` / ${job.expected_bytes}`} bytes received`));
       if (job.error) row.append(element('p', 'index-warning', job.error));
       if (job.origin === 'browser' && ['pending', 'processing'].includes(job.state)) {
         const cancel = element('button', '', 'Cancel'); cancel.type = 'button';
@@ -969,9 +990,11 @@ function closeImports() {
   $('importsDrawer').hidden = true;
   $('importsButton').setAttribute('aria-expanded', 'false');
   $('chooseFile').setAttribute('aria-expanded', 'false');
-  (importsReturnFocus.hidden ? $('chooseFile') : importsReturnFocus).focus();
+  (importsReturnFocus?.isConnected && !importsReturnFocus.hidden ? importsReturnFocus : $('chooseFile')).focus({preventScroll: true});
 }
 function showImports(opener = $('chooseFile'), focusTarget = null) {
+  window.tomeshedBookshelves?.closePreview();
+  window.tomeshedPreview?.close();
   if ($('importsDrawer').hidden) importsReturnFocus = opener;
   $('importsDrawer').hidden = false;
   $('importsButton').setAttribute('aria-expanded', 'true');
@@ -1015,10 +1038,49 @@ $('uploadFile').addEventListener('change', event => {
   if (retrySelection && files.length !== 1) { showImportError('Select one local file to retry.'); retrySelection = null; return; }
   retrySelection = null; importFiles(files);
 });
+let urlRegistrations = 0;
+async function importUrl(url, opener = document.activeElement) {
+  showImports(opener);
+  $('importError').hidden = true;
+  urlRegistrations++;
+  $('importSubmitting').hidden = false;
+  $('urlImportForm').setAttribute('aria-busy', 'true');
+  announceImport('Registering URL import…');
+  try {
+    const job = await api('/api/imports/url', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: url.trim()})});
+    if (!importJobStates.has(job.id)) importJobStates.set(job.id, 'pending');
+    if (!['ready', 'ready_with_warning', 'failed'].includes(importJobStates.get(job.id))) announceImport('URL import registered. Downloading source file.');
+    await loadImportJobs();
+    return true;
+  } catch (error) {
+    showImportError(`URL import: ${error.message}`);
+    announceImport(`URL import failed: ${error.message}`);
+    return false;
+  } finally {
+    urlRegistrations--;
+    $('importSubmitting').hidden = urlRegistrations === 0;
+    $('urlImportForm').setAttribute('aria-busy', String(urlRegistrations !== 0));
+  }
+}
 $('urlImportForm').addEventListener('submit', async event => {
   event.preventDefault();
-  try { await api('/api/imports/url', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('importUrl').value})}); $('importUrl').value=''; await loadImportJobs(); }
-  catch (error) { showImportError(`URL import: ${error.message}`); }
+  if (await importUrl($('importUrl').value)) $('importUrl').value = '';
+});
+const handledUrlPastes = new WeakSet();
+document.addEventListener('paste', event => {
+  if (event.defaultPrevented || handledUrlPastes.has(event) || document.hidden) return;
+  const controls = event.composedPath().filter(node => node instanceof Element);
+  if (controls.some(node => node.matches('input, textarea, select, [role="textbox"], [data-paste-owner]') || node.isContentEditable)) return;
+  // The reader is the application workspace; other open dialogs own paste.
+  if ([...document.querySelectorAll('dialog[open], [aria-modal="true"]')]
+      .some(node => node.id !== 'reader' && !node.hidden && node.getClientRects().length)) return;
+  const clipboard = event.clipboardData;
+  if (!clipboard || clipboard.files.length || [...clipboard.items].some(item => item.kind === 'file') || [...clipboard.types].includes('Files')) return;
+  const url = clipboard.getData('text/plain').trim();
+  if (!/^https?:/i.test(url) || /\s/.test(url)) return;
+  handledUrlPastes.add(event);
+  event.preventDefault();
+  importUrl(url);
 });
 const dropTarget = $('fileDropTarget'); let dragDepth = 0;
 function fileDrag(event) { return [...(event.dataTransfer?.types || [])].includes('Files'); }

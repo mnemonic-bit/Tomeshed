@@ -180,11 +180,11 @@
   }
   function schedulePreviewFocus(shelf, card, trigger) {
     cancelPreviewFocus();
-    if (suppressPreviewFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
+    if (!$('importsDrawer').hidden || suppressPreviewFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
     previewFocusTimer = setTimeout(() => {
       previewFocusTimer = null;
       if (document.activeElement === trigger && visiblePreviewCard({card, trigger}) &&
-          !document.body.classList.contains('reader-open')) openPreview(shelf, card, trigger, true);
+          !document.body.classList.contains('reader-open') && $('importsDrawer').hidden) openPreview(shelf, card, trigger, true);
     }, 800);
   }
   function card(shelf) {

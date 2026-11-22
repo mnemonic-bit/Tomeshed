@@ -179,6 +179,8 @@ class DocumentLibrary:
         staging = self.root / "staging" / f"{job_id}-{attempt}"
         staging.mkdir(parents=True, exist_ok=True)
         try:
+            if job.get("origin") == "url" and not job["retry"]:
+                self.files.prepare_url_source(job)
             source = self.safe_path(job["source_path"])
             result = self._run_conversion(source, job["original_filename"], staging)
         except subprocess.TimeoutExpired:
@@ -192,6 +194,9 @@ class DocumentLibrary:
             self.publish()
 
     def _finish_job(self, job, attempt, result, staging):
+        from file_workflows import redact_url_message
+        if result.get("error"):
+            result["error"] = redact_url_message(result["error"])
         state = result.get("state")
         if state not in ("ready", "ready_with_warning"):
             message = str(result.get("error") or "Document validation failed")[:1000]

@@ -42,7 +42,7 @@ def config_seconds(name, default, minimum=0):
 
 def validate_url(value):
     if not isinstance(value, str) or not value.strip():
-        raise ValueError('Enter an HTTP or HTTPS PDF or EPUB URL')
+        raise ValueError('Enter an HTTP or HTTPS document URL')
     value = value.strip()
     try:
         parsed = urlsplit(value)
@@ -51,7 +51,7 @@ def validate_url(value):
         raise ValueError('Malformed URL') from None
     if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname or parsed.username is not None or parsed.password is not None:
         raise ValueError('URL must use HTTP or HTTPS without credentials')
-    if any(char.isspace() or ord(char) < 32 for char in value) or len(value) > 4096 or not parsed.hostname.strip('. '):
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value) or len(value) > 4096 or not parsed.hostname.strip('. '):
         raise ValueError('Malformed URL')
     try:
         hostname = parsed.hostname.encode('idna').decode('ascii')
@@ -71,6 +71,24 @@ def display_url(value):
     parsed = urlsplit(value)
     query = urlencode([(key, 'REDACTED') for key, _ in parse_qsl(parsed.query, keep_blank_values=True)])
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ''))
+
+
+def redact_url_message(message):
+    """Redact retrieval query values in URLs included in error messages."""
+    def redacted(match):
+        try:
+            return display_url(match.group())
+        except ValueError:
+            return '[invalid URL]'
+    return re.sub(r'https?://[^\s<>\"\']+', redacted, str(message), flags=re.IGNORECASE)
+
+
+def url_filename(url):
+    name = unquote(urlsplit(url).path.rsplit('/', 1)[-1]).replace('\\', '/')
+    name = name.rsplit('/', 1)[-1]
+    name = re.sub(r'[\x00-\x1f\x7f]', '_', name).strip(' .')
+    # Reserve bytes for the detected extension on filesystems with 255-byte names.
+    return name.encode('utf-8')[:240].decode('utf-8', errors='ignore') or 'URL download'
 
 
 def signature(meta):
@@ -198,7 +216,7 @@ class FileWorkflows:
             row = conn.execute('SELECT source_path,state,document_id FROM import_jobs WHERE id=?', (job_id,)).fetchone()
             if not row or row['state'] in ('ready', 'ready_with_warning'):
                 return
-            conn.execute("UPDATE import_jobs SET state='failed',error=?,updated_at=? WHERE id=?", (str(reason)[:1000], time.time(), job_id))
+            conn.execute("UPDATE import_jobs SET state='failed',error=?,updated_at=? WHERE id=?", (redact_url_message(reason)[:1000], time.time(), job_id))
         if remove_source:
             try:
                 self.remove_owned_source(row)
@@ -313,9 +331,7 @@ class FileWorkflows:
                 url = validate_url(data.get('url'))
             except ValueError as exc:
                 return jsonify(error=str(exc)), 400
-            filename = unquote(Path(urlsplit(url).path).name) or 'download'
-            if not filename.lower().endswith(('.pdf', '.epub')):
-                filename = Path(filename).stem + '.pdf'
+            filename = url_filename(url)
             job_id, document_id, _ = self.register(filename, 'url', url, owner_user_id=g.current_user['id'])
             self.library.pool.submit(self.fetch_url, job_id)
             return jsonify(id=job_id, document_id=document_id, state='pending'), 202
@@ -605,7 +621,7 @@ class FileWorkflows:
                 timeout = min(self.connect_timeout, max(.01, self.total_timeout - (time.monotonic()-started)))
                 connection = PinnedHTTPSConnection(parsed.hostname, address, port, timeout) if parsed.scheme == 'https' else http.client.HTTPConnection(address, port, timeout=timeout)
                 host = parsed.hostname if parsed.port is None else f'{parsed.hostname}:{parsed.port}'
-                connection.request('GET', urlunsplit(('', '', parsed.path or '/', parsed.query, '')), headers={'Host':host,'Accept':'application/pdf, application/epub+zip','User-Agent':'Tomeshed/0.1'})
+                connection.request('GET', urlunsplit(('', '', parsed.path or '/', parsed.query, '')), headers={'Host':host,'Accept':'application/pdf, application/epub+zip, application/json','User-Agent':'Tomeshed/0.1'})
                 response = connection.getresponse()
                 if 300 <= response.status < 400 and response.getheader('Location'):
                     if redirects >= 5:
@@ -615,8 +631,13 @@ class FileWorkflows:
                     continue
                 if response.status != 200:
                     raise ValueError(f'URL returned HTTP {response.status}')
-                if response.getheader('Content-Length') and int(response.getheader('Content-Length')) > self.app.config['MAX_UPLOAD_BYTES']:
+                length_header = response.getheader('Content-Length')
+                expected = int(length_header) if length_header and re.fullmatch(r'[0-9]+', length_header) else None
+                if expected is not None and expected > self.app.config['MAX_UPLOAD_BYTES']:
                     raise ValueError('URL exceeds upload size limit')
+                with self.db() as conn:
+                    conn.execute('UPDATE import_jobs SET expected_bytes=?,updated_at=? WHERE id=?', (expected,time.time(),job_id))
+                self.library.publish()
                 count = 0
                 with target.open('xb') as output:
                     while True:
@@ -626,7 +647,9 @@ class FileWorkflows:
                         response_socket = connection.sock or getattr(getattr(response.fp, 'raw', None), '_sock', None)
                         if response_socket is not None:
                             response_socket.settimeout(min(self.connect_timeout, remaining))
-                        chunk = response.read(65536)
+                        chunk = response.read1(65536)
+                        if time.monotonic() - started > self.total_timeout:
+                            raise ValueError('URL total timeout exceeded')
                         if not chunk:
                             break
                         count += len(chunk)
@@ -638,17 +661,9 @@ class FileWorkflows:
                         self.library.publish()
                 if count == 0:
                     raise ValueError('URL returned an empty file')
-                kind, *_ = detect_source(target)
-                if kind not in ('pdf','epub'):
-                    raise ValueError('URL did not contain a PDF or EPUB')
+                if expected is not None and count != expected:
+                    raise ValueError('URL response ended before the declared byte count')
                 with self.db() as conn:
-                    if not row['original_filename'].lower().endswith('.' + kind):
-                        name = Path(row['original_filename']).stem + '.' + kind
-                        renamed = target.with_name(name)
-                        os.replace(target, renamed)
-                        target = renamed
-                        conn.execute('UPDATE import_jobs SET original_filename=?,source_path=? WHERE id=?',
-                                     (name,str(renamed.relative_to(self.root)),job_id))
                     conn.execute('UPDATE import_jobs SET transfer_complete=1,bytes_received=?,updated_at=? WHERE id=?',
                                  (count,time.time(),job_id))
                 self.library.pool.submit(self.library._process_job, job_id)
@@ -659,6 +674,24 @@ class FileWorkflows:
         finally:
             if connection:
                 connection.close()
+
+    def prepare_url_source(self, job):
+        """Validate completed URL bytes and use the detected source extension."""
+        target = self.owned_path(job['source_path'])
+        kind, *_ = detect_source(target)
+        extension = {'pdf': 'pdf', 'epub': 'epub', 'docling': 'json'}[kind]
+        if not job['original_filename'].lower().endswith('.' + extension):
+            name = Path(job['original_filename']).stem + '.' + extension
+            renamed = target.with_name(name)
+            os.replace(target, renamed)
+            try:
+                with self.db() as conn:
+                    conn.execute('UPDATE import_jobs SET original_filename=?,source_path=? WHERE id=?',
+                                 (name,str(renamed.relative_to(self.root)),job['id']))
+            except Exception:
+                os.replace(renamed, target)
+                raise
+            job.update(original_filename=name, source_path=str(renamed.relative_to(self.root)))
 
     def start_watcher(self):
         for path in (self.root / 'staging').glob('.watch-*.part'):

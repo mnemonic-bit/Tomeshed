@@ -52,3 +52,6 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0046 — Library shows a redundant Books and documents heading](bug-0046-remove-books-and-documents-heading.md) — Open.
 - [Bug 0047 — Footer counts and uptime do not match the requested display](bug-0047-footer-document-count-and-uptime.md) — Open.
 - [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.
+
+- [Bug 0049 — Import refresh loses bookshelf focus](bug-0049-import-refresh-loses-bookshelf-focus.md) — Resolved in `0.5.0` during Feature 0009 review.
+- [Bug 0050 — URL filename exceeds the filesystem byte limit](bug-0050-url-filename-exceeds-filesystem-byte-limit.md) — Resolved in `0.5.0` during Feature 0009 review.

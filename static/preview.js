@@ -195,11 +195,11 @@
   }
   function scheduleFocus(id, card, thumbnail, trigger) {
     cancelFocus();
-    if (suppressFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
+    if (!$('importsDrawer').hidden || suppressFocus.delete(trigger) || !trigger.matches(':focus-visible')) return;
     pendingFocus = setTimeout(() => {
       pendingFocus = null;
       if (document.activeElement === trigger && visibleCard({card, thumbnail}) &&
-          !document.body.classList.contains('reader-open')) open(id, card, thumbnail, trigger, true);
+          !document.body.classList.contains('reader-open') && $('importsDrawer').hidden) open(id, card, thumbnail, trigger, true);
     }, 800);
   }
   function move(delta) {
