@@ -10,6 +10,8 @@ These settings require the repository owner to change GitHub state. Use the publ
 
 The `Main` workflow grants `packages: write`, `contents: write`, `attestations: write`, and `id-token: write` only to its publication job after validation. Pull request workflows have no publication credentials. Standard public repository runners are sufficient; no paid security product or runner is required.
 
+Pushes to `develop` run `Validation`, including the container build and smoke test in `tests/run-all.sh`. Pull requests targeting `main` or `develop` run the same validation gate. `CodeQL` checks both branches on pushes and pull requests. The `Main` workflow runs only for pushes to `main`; development validation does not publish images or GitHub Releases.
+
 ## Security and dependency maintenance
 
 Enable the dependency graph, Dependabot alerts, Dependabot security updates, and private vulnerability reporting. Confirm public repository secret scanning and push protection are enabled. Monthly version update pull requests cover Actions and Docker. Update `requirements.txt` and `requirements-container.txt` together in a reviewed pull request; run `tests/container/check-lock.sh` on that change. Do not enable CodeQL default setup alongside `.github/workflows/codeql.yml`.

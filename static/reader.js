@@ -25,9 +25,14 @@
     panelErrorNode.textContent = message;
     panelErrorNode.hidden = false;
   }
+  function updateDownloads(item) {
+    const downloads = window.tomeshedCatalog.renderDownloads(item);
+    $('readerDownloads').replaceChildren(...(downloads ? [downloads] : []));
+  }
   function updateDocument(item) {
     if (!item || !isOpenFor(item.id)) return;
     current.documentItem = item;
+    updateDownloads(item);
     const scrollTop = panel.scrollTop;
     const active = panel.contains(document.activeElement) ? document.activeElement : null;
     const name = active?.getAttribute('name');
@@ -259,6 +264,7 @@
     $('readerPanelMinimize').hidden = panelMinimized;
     panel.scrollTop = 0; panelReturnFocus = null; panelErrorNode.hidden = true;
     panelContent.replaceChildren(window.tomeshedCatalog.renderDocumentInfo(documentItem));
+    updateDownloads(documentItem);
     panelContent.querySelector('.reader-panel-details')?.toggleAttribute('inert', panelMinimized);
     panelContent.querySelector('.reader-panel-rail')?.toggleAttribute('inert', !panelMinimized);
     $('readerToc').hidden = true; controls.forEach(control => control.hidden = false);
@@ -288,6 +294,9 @@
         const first = body.querySelector('.pdf-page img');
         if (!first) { showFailure('unsupported_content', 'The PDF has no pages'); return; }
         await first.decode();
+      } else if (content.format === 'epub') {
+        // Settle image dimensions before restoring the locator and calculating progress.
+        await Promise.allSettled([...body.querySelectorAll('img')].map(image => image.decode()));
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
       if (token !== generation || $('readerError').hidden === false) return;

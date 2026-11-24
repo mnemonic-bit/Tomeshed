@@ -102,7 +102,6 @@ class OrganizationService:
             "reading_state": state,
             "last_read_at": last_read,
             "thumbnail_available": bool(row["thumbnail_path"]),
-            "stored_filename": source.name if source and source.suffix != ".source" else row["original_filename"],
             "source_available": source is not None,
             "structured_available": valid_docling_json(source) if source and row["source_type"] == "docling" else valid_docling_json(artifact) if artifact else False,
             "source_url": display_url(row["source_url"]) if row["source_url"] else None,

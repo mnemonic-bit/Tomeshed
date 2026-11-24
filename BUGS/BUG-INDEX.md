@@ -48,7 +48,10 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0042 — Bookshelf preview grows beyond two rows](bug-0042-bookshelf-preview-exceeds-two-rows.md) — Resolved in `0.4.14`.
 - [Bug 0043 — Reader Remove Document uses an emoji trash can](bug-0043-reader-remove-document-trash-icon.md) — Resolved in `0.4.15`.
 - [Bug 0044 — Reader Close button is a bordered text button](bug-0044-reader-close-button-angle-bracket.md) — Resolved in `0.4.16`.
-- [Bug 0045 — Preview stays open after the pointer leaves](bug-0045-preview-stays-open-after-pointer-leaves.md) — Open.
+- [Bug 0045 — Preview stays open after the pointer leaves](bug-0045-preview-stays-open-after-pointer-leaves.md) — Resolved in `0.4.18`.
 - [Bug 0046 — Library shows a redundant Books and documents heading](bug-0046-remove-books-and-documents-heading.md) — Open.
 - [Bug 0047 — Footer counts and uptime do not match the requested display](bug-0047-footer-document-count-and-uptime.md) — Open.
 - [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.
+- [Bug 0049 — Develop branch does not trigger a build](bug-0049-develop-branch-build-not-triggered.md) — Resolved locally in `0.4.19`; awaiting GitHub push and pull-request verification.
+- [Bug 0050 — Redundant connection status, hidden preview controls, and exposed storage filenames](bug-0050-status-preview-reader-and-internal-filenames.md) — Resolved locally in `1.0.0`.
+- [Bug 0052 — Bookshelf browser check fails its reader-position assertion after restart](bug-0052-bookshelf-reader-position-after-restart.md) — Resolved locally in `1.0.1`; awaiting a GitHub Actions rerun.
