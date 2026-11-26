@@ -54,3 +54,4 @@ Use this index to find open and resolved defects. Each numbered report records t
 - [Bug 0048 — Pillow update conflicts with pinned Docling dependencies](bug-0048-pillow-update-conflicts-with-docling.md) — Resolved locally in `0.4.17`; awaiting a GitHub rerun.
 - [Bug 0049 — Develop branch does not trigger a build](bug-0049-develop-branch-build-not-triggered.md) — Resolved locally in `0.4.19`; awaiting GitHub push and pull-request verification.
 - [Bug 0050 — Redundant connection status, hidden preview controls, and exposed storage filenames](bug-0050-status-preview-reader-and-internal-filenames.md) — Resolved locally in `1.0.0`.
+- [Bug 0052 — Bookshelf browser check fails its reader-position assertion after restart](bug-0052-bookshelf-reader-position-after-restart.md) — Resolved locally in `1.0.1`; awaiting a GitHub Actions rerun.

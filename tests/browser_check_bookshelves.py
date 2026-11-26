@@ -79,6 +79,66 @@ def wait_bookmark(page,base,shelf_id,document_id):
     raise AssertionError('Bookshelf bookmark was not saved')
 
 
+def check_epub_image_restore(page,shelf_selector,document_id,expected_label,expected_position,expected_scroll_top):
+    resource='**/reader/resource?*'
+    pending=[]
+    def hold_image(route):
+        pending.append(route)
+    def start_epub():
+        open_shelf(page,shelf_selector)
+        page.locator('.bookshelf-member').filter(has_text='EPUB Book').get_by_role('button',name='Open').click()
+        page.wait_for_function("document.querySelector('#readerContent img') && !document.querySelector('#readerContent img').complete")
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        assert pending, 'The pending EPUB image was not intercepted'
+
+    page.route(resource,hold_image)
+    try:
+        start_epub()
+        assert page.locator('#readerPosition').inner_text()=='Opening…'
+        route=pending.pop()
+        route.fulfill(response=route.fetch())
+        page.wait_for_function("document.querySelector('#readerPosition').textContent.includes('Location')")
+        actual=page.locator('#readerPosition').inner_text()
+        assert actual==expected_label, ('EPUB Book with delayed image',actual,expected_label)
+        assert page.locator('#readerContent img').evaluate('(image) => image.complete && image.naturalWidth > 0')
+        assert abs(page.locator('#readerScroll').evaluate('(element) => element.scrollTop')-expected_scroll_top)<=1
+        page.locator('#readerClose').click()
+    finally:
+        page.unroute(resource,hold_image)
+
+    def fail_image(route):
+        route.abort()
+    page.route(resource,fail_image)
+    try:
+        open_member(page,shelf_selector,'EPUB Book')
+        # Opening another reader waits for the preceding reader's progress writes.
+        assert saved_position(page,document_id)['locator']==expected_position['locator']
+        assert page.locator('#readerError').is_hidden()
+        assert page.locator('#readerContent img').evaluate('(image) => image.complete && image.naturalWidth === 0')
+        assert page.locator('#readerPosition').inner_text().startswith('Location 2')
+        page.locator('#readerClose').click()
+    finally:
+        page.unroute(resource,fail_image)
+
+    page.route(resource,hold_image)
+    try:
+        start_epub()
+        assert saved_position(page,document_id)['locator']==expected_position['locator']
+        assert page.locator('#readerPosition').inner_text()=='Opening…'
+        page.locator('#readerClose').click()
+        open_member(page,shelf_selector,'Docling Book')
+        label=page.locator('#readerPosition').inner_text()
+        for route in pending:
+            route.fulfill(response=route.fetch())
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        assert page.locator('#readerTitle').inner_text()=='Docling Book'
+        assert page.locator('#readerPosition').inner_text()==label
+        assert page.locator('#readerError').is_hidden()
+        page.locator('#readerClose').click()
+    finally:
+        page.unroute(resource,hold_image)
+
+
 def main():
     checks={}
     with tempfile.TemporaryDirectory() as folder:
@@ -219,6 +279,8 @@ def main():
                 page.wait_for_function("document.querySelector('.bookshelf-recipients').textContent.includes('recipient')")
                 page.locator('#closeBookshelfDialog').click()
                 owner_labels={}
+                owner_positions={}
+                owner_scroll_tops={}
                 for title,document_id in zip(('PDF Book','EPUB Book','Docling Book'),docs[:3]):
                     open_member(page,'#documentGrid .bookshelf-card[data-owned=true]',title)
                     if title=='PDF Book':
@@ -230,13 +292,15 @@ def main():
                         page.locator('#readerNext').click()
                     page.wait_for_timeout(700)
                     owner_labels[title]=page.locator('#readerPosition').inner_text()
+                    owner_scroll_tops[title]=page.locator('#readerScroll').evaluate('(element) => element.scrollTop')
                     page.locator('#readerClose').click()
                     value=saved_position(page,document_id)
                     assert value['locator']
+                    owner_positions[title]=value
                 assert saved_position(page,docs[0])['locator']['page']==2
                 for title in ('PDF Book','EPUB Book','Docling Book'):
                     open_member(page,'#documentGrid .bookshelf-card[data-owned=true]',title)
-                    assert page.locator('#readerPosition').inner_text()==owner_labels[title]
+                    assert page.locator('#readerPosition').inner_text()==owner_labels[title], (title, page.locator('#readerPosition').inner_text(), owner_labels[title])
                     page.locator('#readerClose').click()
                 checks['owner_positions']='passed'
                 page.screenshot(path=str(ARTIFACTS/'owner-bookshelves.png'),full_page=True)
@@ -253,9 +317,11 @@ def main():
                 server=start()
                 page.reload()
                 page.wait_for_function("document.querySelectorAll('#documentGrid .bookshelf-card[data-owned=true]').length === 1")
+                check_epub_image_restore(page,'#documentGrid .bookshelf-card[data-owned=true]',docs[1],owner_labels['EPUB Book'],owner_positions['EPUB Book'],owner_scroll_tops['EPUB Book'])
+                checks['epub_image_restore']='passed'
                 for title in ('PDF Book','EPUB Book','Docling Book'):
                     open_member(page,'#documentGrid .bookshelf-card[data-owned=true]',title)
-                    assert page.locator('#readerPosition').inner_text()==owner_labels[title]
+                    assert page.locator('#readerPosition').inner_text()==owner_labels[title], (title, page.locator('#readerPosition').inner_text(), owner_labels[title])
                     page.locator('#readerClose').click()
                 checks['all_formats_restart_resume']='passed'
                 for title,document_id in zip(('PDF Book','EPUB Book'),docs[:2]):
@@ -266,7 +332,7 @@ def main():
                     page.wait_for_function("document.querySelector('#reader').hidden === false")
                     page.wait_for_function("document.querySelector('#readerPosition').textContent.includes('Page') || document.querySelector('#readerPosition').textContent.includes('Location')")
                     assert title in page.locator('#readerTitle').inner_text()
-                    assert page.locator('#readerPosition').inner_text()==owner_labels[title]
+                    assert page.locator('#readerPosition').inner_text()==owner_labels[title], (title, page.locator('#readerPosition').inner_text(), owner_labels[title])
                     page.locator('#readerClose').click()
                 checks['continue_pdf_epub_restart']='passed'
                 open_member(page,'#documentGrid .bookshelf-card[data-owned=true]','Docling Book')
